@@ -80,6 +80,34 @@ wheel and actual installation. Backup refresh may renew only the three backup
 identity fields after verification; scope, budgets and implementation changes
 require another verified deployment preparation.
 
+The service verifies complete installed package, wheel and receipt content at
+startup. Each action then re-enumerates that verified package's source/resources,
+distribution metadata, wheel and receipt and compares OS file identity, size,
+mode, owner, inode, mtime and ctime. A changed resource roster or identity rejects
+the action; a new process must perform full verification again. This assumes the
+existing trusted OS/interpreter boundary and does not cache mutable business
+state, database permissions, leases or fences. Runtime login privileges and the
+database scope remain live checks. A backup-only profile renewal starts a fresh
+verified guard under the same supervisor reservation; it cannot reuse the old
+guard's pinned configuration.
+
+Preflight and tick JSON include `stage_timings`. `before_action_guard` is an
+inclusive child of owner work and must not be added to its parent's elapsed time.
+`PROSPECTIVE_STAGE_FAILURE` records the phase, elapsed time and exception type
+before the ordinary failure path exits. It neither retries nor masks the error.
+The tick hard stop remains 120 seconds. Operational observation targets are:
+
+| Work class | Observation target | Boundary |
+|---|---|---|
+| Cold startup/preflight | Explain package, ACL, Artifact and backup verification separately | Outside tick; full verification required |
+| Warm idle | p95 below 60 seconds; ordinary maximum below 90 | 120-second hard stop |
+| Prediction | Framework overhead separately from actual Provider, normalization and owner work | 120-second hard stop; frozen work continues through Runtime |
+| Outcome/Evaluation | Actual acquisition, normalization, settlement and report stages separately | 120-second hard stop; no terminal reopening |
+| Backup/restart | Record drain, snapshot, verify, mirror, preflight and subsequent tick duration | One owned restart; failure requires reconciliation |
+
+These targets are observations to verify, not timeout increases or claims of
+long-term stability. Missing workload measurements remain `NOT_OBSERVED`.
+
 ```bash
 uv run mra archive prospective preflight --operation-config "$MRA_OPERATION_CONFIG"
 uv run mra archive prospective serve --help

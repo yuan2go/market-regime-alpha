@@ -21,6 +21,7 @@ from market_regime_alpha.infrastructure.postgres.prospective_operation_session i
 )
 from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockSdk, BaoStockSession
 from market_regime_alpha.market.ports import MarketProviderError
+from market_regime_alpha.interfaces.installed_identity import VerifiedInstallation
 from market_regime_alpha.interfaces.prospective_operations import (
     ProspectiveOperationConfig, implementation_source_sha256,
 )
@@ -67,6 +68,7 @@ class ProspectiveOperationGuard:
         self.backup_verified_at: datetime | None = None
         self.backup_snapshot_at: datetime | None = None
         self._runtime_principal: dict[str, Any] | None = None
+        self._installation: VerifiedInstallation | None = None
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = self.session.snapshot()
@@ -84,11 +86,12 @@ class ProspectiveOperationGuard:
         if self.config.version != 2:
             return
         from market_regime_alpha.interfaces.deployment_profile import (
-            inspect_runtime_principal, require_installation,
+            inspect_runtime_principal,
         )
 
         if self._runtime_principal is None:
-            self._runtime_principal = require_installation(self.config)["runtime_principal"]
+            self._installation = VerifiedInstallation.verify(self.config)
+            self._runtime_principal = self._installation.runtime_principal
         if inspect_runtime_principal(self.connection) != self._runtime_principal:
             raise ValueError("OPERATION_RUNTIME_PRINCIPAL_CHANGED")
 
@@ -123,7 +126,12 @@ class ProspectiveOperationGuard:
             raise ValueError("OPERATION_DISK_RESERVE_EXHAUSTED")
         if self.settings.pool_max_size > self.config.maximum_pool_connections:
             raise ValueError("OPERATION_CONNECTION_BUDGET_EXCEEDED")
-        if implementation_source_sha256() != self.config.source_sha256:
+        if self._installation is not None:
+            self._installation.require_unchanged(self.config)
+        elif self.config.version == 2:
+            self._installation = VerifiedInstallation.verify(self.config)
+            self._runtime_principal = self._installation.runtime_principal
+        elif implementation_source_sha256() != self.config.source_sha256:
             raise ValueError("OPERATION_IMPLEMENTATION_CHANGED")
         if self.backup_verified_at is not None:
             now = self.session.clock()
@@ -135,6 +143,9 @@ class ProspectiveOperationGuard:
                     raise ValueError("OPERATION_BACKUP_BASELINE_EXPIRED")
 
     def verify_startup(self, application: TargetApplication) -> dict[str, Any]:
+        if self.config.version == 2:
+            self._installation = VerifiedInstallation.verify(self.config)
+            self._runtime_principal = self._installation.runtime_principal
         self.verify_runtime_principal()
         self.session.allow_prospective_recovery(
             application.prospective_archives.recovery_admissions(

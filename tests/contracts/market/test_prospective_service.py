@@ -85,6 +85,17 @@ def test_service_uses_the_existing_continuation_for_each_wakeup(monkeypatch):
     assert rows[1]["configuration_sha256"] == "2"*64
     assert rows[1]["alert_changes"] == rows[2]["alert_changes"] == []
     assert rows[3] == {"stop_reason": "WAKEUP_LIMIT", "completed_wakeups": 2}
+    assert set(rows[0]["stage_timings"]) == {"installed_profile", "supervisor_scope", "bootstrap_scope", "daily_preparation",
+                                             "guard_preflight_principal_artifact_backup", "provider_login"}
+    for sequence, tick in enumerate(rows[1:3], 1):
+        assert tick["tick_sequence"] == sequence
+        stages = tick["stage_timings"]
+        assert stages["before_action_guard"]["count"] == 1
+        assert stages["before_action_guard"]["inclusive_child"] is True
+        assert stages["before_action_guard"]["add_to_other_stage_totals"] is False
+        assert stages["installation_scope_checks"]["count"] == 2
+        assert stages["before_action_guard"]["elapsed_seconds"] <= stages["prospective_continuation"]["elapsed_seconds"]
+        assert all(stage["last_state"] == "PASS" and stage["elapsed_seconds"] >= 0 for stage in stages.values())
 
 
 def test_service_does_not_retry_an_unknown_tick_effect():
