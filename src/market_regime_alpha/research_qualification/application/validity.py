@@ -174,7 +174,8 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
     historic = validity_statistics(historic_pairs, **kwargs)
     formal_session_count = len({pair.session for pair in formal_pairs})
     meets_floor = formal_session_count >= protocol["minimum_sessions"] and len(formal_pairs) >= protocol["minimum_observations"]
-    invalid_formal = sum(row["temporal_integrity"]["invalid_count"] for row in rows if row["target_session"] >= first)
+    invalid_formal = sum(row["temporal_integrity"]["invalid_count"] for row in rows
+                         if row["target_session"] >= first and (end is None or row["target_session"] < end))
     status = "VALIDITY_BASELINE_ESTABLISHED" if meets_floor and not invalid_formal else (
         "VALIDITY_EVIDENCE_ACCUMULATING" if formal_session_count else "INSUFFICIENT_OBSERVATIONS")
     filtered = target_session_from is not None or target_session_to is not None
@@ -237,7 +238,8 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
         "predecessor_protocol_descriptive": validity_statistics(predecessor_pairs, **kwargs),
         "post_hoc_policy": "NEW_HISTORICAL_STATISTICS_NEVER_MUTATE_OR_UPGRADE_FROZEN_EVALUATION",
         "metric_authority": "canonical_evaluation projects original stored metrics exactly; validity statistics are separately versioned derived interpretation",
-        "unavailable_sessions": observations["unavailable"], "planning_gaps": [day for day in closed if day >= first and day not in declared_dates],
+        "unavailable_sessions": observations["unavailable"], "planning_gaps": [day for day in closed
+            if day >= first and (end is None or day < end) and day not in declared_dates],
         "canonical_observation_sha256": canonical_json_sha256(cycles), "canonical_observations": cycles,
         "operational_session_count": len(complete_dates), "predeclared_session_count": formal_session_count,
         "operational_session_scope": "RECONCILED_CANONICAL_SESSIONS_ACROSS_MODEL_USES; SEPARATE_FROM_FORMAL_COHORT",

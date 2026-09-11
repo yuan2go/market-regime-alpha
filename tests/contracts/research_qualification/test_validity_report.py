@@ -14,8 +14,8 @@ from market_regime_alpha.research_qualification.domain.validity_temporal import 
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 
 
-def canonical_fixture(day=date(2026, 9, 14)):
-    protocol = load_validity_protocol()
+def canonical_fixture(day=date(2026, 9, 14), *, protocol_version=2):
+    protocol = load_validity_protocol(protocol_version)
     start = datetime.combine(day, datetime.min.time(), tzinfo=timezone.utc) + timedelta(hours=1, minutes=30)
     end = start + timedelta(hours=5, minutes=30)
     cutoff = start - timedelta(hours=2)
@@ -57,15 +57,15 @@ def canonical_fixture(day=date(2026, 9, 14)):
                                     'capture_recorded_at':end+timedelta(seconds=3),'capture_known_at':end+timedelta(seconds=3),
                                     'known_at':end+timedelta(seconds=4),'source_gap_id':None} for i in range(1,4)]}}
     calendar = [{'session_date':date(2026,9,10),'session_id':UUID(int=70),'open_at':datetime(2026,9,10,1,30,tzinfo=timezone.utc),'close_at':datetime(2026,9,10,7,tzinfo=timezone.utc)},
-                {'session_date':date(2026,9,14),'session_id':UUID(protocol['first_eligible_target_session_id']),
+                {'session_date':date.fromisoformat(protocol['first_eligible_future_session']),'session_id':UUID(protocol['first_eligible_target_session_id']),
                  'open_at':datetime.fromisoformat(protocol['first_eligible_target_start']),
-                 'close_at':datetime(2026,9,14,7,tzinfo=timezone.utc)}]
+                 'close_at':datetime.combine(date.fromisoformat(protocol['first_eligible_future_session']), datetime.min.time(), tzinfo=timezone.utc)+timedelta(hours=7)}]
     observations = {'cycles':[cycle], 'unavailable':[], 'observed_at':end+timedelta(minutes=1), 'business_writes':0}
     return observations, protocol, calendar
 
 
 def test_protocol_immutable_resource_hash_and_future_boundary():
-    protocol = load_validity_protocol()
+    protocol = load_validity_protocol(2)
     assert protocol['protocol_sha256'] == 'efb4b9683ccf6201b9c1e3cbe0eb32338559fc430756155b06374794ffdb52de'
     assert protocol['minimum_sessions'] == 20 and protocol['minimum_observations'] == 500
     with pytest.raises(ValueError, match='UNDECLARED'):
@@ -197,7 +197,7 @@ def test_cli_readonly_report_dispatch_and_protocol_refusal(monkeypatch):
     monkeypatch.setattr(surface, 'daily_observations', read)
     env = {'MRA_DATABASE_URL':'postgresql:///unused_test', 'MRA_ARTIFACT_ROOT':'/tmp/unused-validity-test'}
     output, error = StringIO(), StringIO()
-    assert main(['research','validity','daily'],environ=env,stdout=output,stderr=error) == 0
+    assert main(['research','validity','daily','--protocol-version','2'],environ=env,stdout=output,stderr=error) == 0
     result = json.loads(output.getvalue())
     assert result['business_writes'] == 0
     assert result['ALPHA_PROVEN'] == 'NO'
@@ -293,7 +293,7 @@ def test_predecessor_protocol_cannot_accumulate_into_successor():
 
 
 def test_walk_forward_actual_roster_accumulates_and_rejects_late_model_and_feature():
-    protocol = load_validity_protocol()
+    protocol = load_validity_protocol(2)
     calendar, cycles = [], []
     first = date(2026,1,1)
     for offset in range(337):
@@ -324,7 +324,7 @@ def test_walk_forward_actual_roster_accumulates_and_rejects_late_model_and_featu
 
 
 def test_walk_forward_unknown_labels_never_ready_and_old_gap_is_retained():
-    protocol = load_validity_protocol()
+    protocol = load_validity_protocol(2)
     calendar, cycles = [], []
     first = date(2026,1,1)
     for offset in range(337):
