@@ -75,3 +75,12 @@ The overall exit gate remains NO pending owner authorization, real successor
 ModelUse registration and future v3 declaration. Historical failures and prior
 protocol bytes are preserved; bounded engineering PASS is not sustained or Alpha
 evidence.
+
+The [authorized ModelUse rollover and v3 activation](Model-Use-Rollover-Validity-V3-Activation-2026-09-11.md)
+and its [machine-readable evidence](Model-Use-Rollover-Validity-V3-Activation-2026-09-11.json)
+record one canonical successor registration, exact HBA restoration, unchanged
+runtime ACL, actual buffered capacity, immutable future v3 and same-wheel live
+configuration handoff. Sep-10/Sep-11 replay and Sep-14 frozen old-Use work remain
+unchanged. Activation gates pass; actual scheduled/short-window failures remain
+visible. Two completed days and zero formal v3 observations grant no model-value
+or Alpha claim.

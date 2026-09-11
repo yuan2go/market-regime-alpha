@@ -528,7 +528,8 @@ operational service; it does not activate a new service profile.
 ```bash
 uv run mra research daily observations --target-session-from 2026-09-10 --target-session-to 2026-09-14 --experimental-model-use-id "$ORIGINAL_MODEL_USE" --include-unavailable
 uv run mra research validity daily
-uv run mra research validity daily --target-session-from 2026-09-10 --target-session-to 2026-09-10
+uv run mra research validity daily --protocol-version 2 --target-session-from 2026-09-10 --target-session-to 2026-09-10
+uv run mra research validity daily --protocol-version 1
 ```
 
 Observation filters also accept exact Dataset/Decision IDs and `--completed-only`.
@@ -538,7 +539,7 @@ used for sample adequacy. Unavailable/failed requests and planning gaps remain
 visible. Complete history reads are explicit; the service's default health budget
 is unchanged.
 
-The current protocol is v2, first eligible Target Sep-14, with 20 real estimable
+The current protocol is v3, first eligible Target Sep-15, with 20 real estimable
 sessions and 500 common observations required. Rolling N is 20, K is 5, and
 quantile tails each contain `floor(n/5)` observations ranked solely by frozen
 forecasts with deterministic commitment-ID ties. Only ALL_POPULATION is declared.
@@ -547,6 +548,11 @@ Eligibility and instrument roster binding was missing. Sep-11 belongs to that
 descriptive predecessor; Sep-10 new statistics are post-hoc. No previous
 Evaluation receives new metric rows. A new protocol requires a new version,
 predecessor SHA, actual declaration time, reason and later future cohort.
+v2 bytes remain immutable; its formal cohort ends exclusively at Sep-15.
+Sep-14's already published Prediction remains bound to the original Use.
+v3 binds the separately registered successor Use; date filters never combine
+old and new Uses into its formal population. Planning gaps and temporal blockers
+also respect each protocol's exclusive end boundary.
 
 The report separates canonical stored metrics from versioned derived statistics,
 temporal validity from Formal PIT, and sample adequacy from information gain.
@@ -572,3 +578,38 @@ profile and timeout. Two successful recovery ticks do not establish continuity.
 The immutable baseline record binds stage profiles and the exact query plan;
 any performance follow-up must preserve source-integrity and privilege drift
 checks and use actual service measurements, not a Provider batching assumption.
+
+### Controlled ExperimentalModelUse rollover
+
+Owner maintenance requires explicit authorization for the exact original
+database and local OS owner. First preserve the current stopped/running service
+fact, drain if running, reconcile Attempts and unknown effects, create a fresh
+PostgreSQL backup, verify all referenced Artifact bytes and mirror to a distinct
+physical device. Verify actual disk topology: paths and filesystem identifiers
+alone do not prove separate hardware. Same-host redundancy is not offsite
+disaster recovery.
+
+Freeze original HBA bytes, SHA, mode, owner and complete runtime privilege
+projection. Temporary authentication permits only the exact database, local
+Unix socket, exact OS owner and peer authentication; no TCP, trust or grants.
+Reload, verify actual owner/session/database/OID/cluster/schema/socket, then use
+the existing Artifact and Model commands to register the one reconciled
+successor identity with future validity. Close owner sessions and immediately
+restore original HBA bytes/mode/owner, reload, prove owner login rejected and
+the full runtime ACL unchanged. Any restoration failure blocks declaration and
+service activation. A partially completed command requires read-only receipt
+reconciliation; never create another successor or reopen terminal work.
+
+Only after restoration and canonical owner reload may a successor protocol be
+declared. Verify actual captured-calendar capacity with unchanged 20/500 floors,
+32 members, ten downtime sessions and 20% missing-observation buffer. Preserve
+predecessor bytes and use a fresh DB declaration clock before the first eligible
+Target. A source declaration grants no formal Model or Provider qualification.
+
+For a same-wheel rollover, retain the verified installation and deployment
+receipt. Change only the daily template's explicit Use identity; renew only the
+existing three backup bindings after a fresh snapshot. Save old private files,
+preflight the proposed profile/template, activate the owned service once and
+verify complete ticks. Original published/failed/abstained work continues from
+its frozen plan. Read-only Validity source changes use a separate analysis wheel.
+Manual maintenance or recovery never becomes a scheduled-backup PASS.

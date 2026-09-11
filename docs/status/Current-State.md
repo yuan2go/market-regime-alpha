@@ -7,7 +7,61 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
-## Operational reliability and cohort capacity
+## ModelUse rollover and Validity v3 activation
+
+The authorized original-database owner maintenance is complete. Exactly one
+successor ExperimentalModelUse `3a426d5f-702f-56fb-9563-0bc6256b558c` was registered
+through Model owner at 2026-09-11T14:13:36.571287Z, valid from
+2026-09-11T14:23:36.127586Z through 2026-12-31T08:00:00Z. ModelVersion, Feature,
+Target, baseline and the fixed 32-member population are unchanged. The old Use
+is unchanged and not revoked. Original HBA bytes/mode/owner were restored before
+v3 declaration; owner login is again rejected and the full runtime ACL matches.
+
+Immutable v3 was declared from actual DB clock at 2026-09-11T14:14:48.484434Z,
+with first eligible Target Sep-15 and exact v2 predecessor. SHA-256 is
+`39106ff7c6d1742761f73ceba937b99b21092a76ab136f0e2fe7ec2aa16fc53f`.
+The real captured calendar and successor lifetime permit 72 future sessions /
+2,304 observations; after ten downtime sessions and 20% missing buffer the
+scenario is 62 / 1,587. Possible and robust capacity pass unchanged 20/500 floors.
+These are capacity bounds, not observed evidence. v1/v2 bytes remain immutable;
+v2 ends exclusively at Sep-15. The read-only report defaults to v3 and exposes
+predecessor protocols separately. Temporal blockers and planning gaps respect
+each cohort's exclusive end.
+
+At **2026-09-11 22:39:57.411222+08:00**, the original installed implementation
+`d2c794f152e2f2670a78d9f295f42a1baad8a42b` is running with the new template after
+a fresh verified backup, distinct-device mirror, preflight and single activation.
+The original wheel/receipt are retained; the read-only v3 package is separately
+installed and tested. Five complete ticks took 32.876–34.186 seconds, median
+33.443, nearest-rank p95 34.186; no QueryCanceled or resource stop was observed.
+The 120-second tick limit remains unchanged. This is a bounded observation.
+
+Sep-10 and Sep-11 are completed under the old Use. Their complete canonical
+projections and zero-write completed-cycle replay are unchanged. Sep-14 was
+already timely published under the old Use and remains PENDING_MATURITY with
+identical frozen bytes. No successor Prediction exists yet; its first real
+publication remains BLOCKED_BY_ELAPSED_REAL_TIME. Two real completed sessions
+leave SUSTAINED_MULTI_DAY_PROOF independently time-blocked; v3 has zero formal
+observations. MODEL_VALUE remains NOT_ESTIMABLE and ALPHA_PROVEN remains NO.
+
+The real 19:00 scheduled backup restart failed at Provider access and remains
+FAIL; the later authorized manual recovery does not change that fact. No natural
+scheduled fire occurred during this WP. A separate actual 60-second 32-member
+window entered late and captured only six members; no one-minute capacity PASS
+is claimed. Restart legally terminalized another archive deadline missed during
+downtime. All historical terminal failures, 810 MISSED windows (including the
+original 544) and one planning gap remain visible. Current active/expired/unknown
+Attempts and overdue unterminalized work are zero; historical health still needs
+attention.
+
+The five explicitly scoped owner/successor/capacity/v3/rollover gates and this
+package's overall activation gate pass. Continue natural v3 evidence accumulation
+and independently track scheduled recovery and the known short-window cadence
+issue. This grants no Alpha-iteration, formal PIT or production authority.
+See the [immutable activation record](../archive/Model-Use-Rollover-Validity-V3-Activation-2026-09-11.md)
+for exact source, security, owner, deployment, replay, failures and tests.
+
+## Previous operational reliability and cohort capacity cutoff
 
 The current correction keeps the 120-second tick budget, canonical Runtime,
 restricted principal and financial semantics. Installed identity is verified at
