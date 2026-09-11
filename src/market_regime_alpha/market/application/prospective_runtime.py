@@ -26,6 +26,10 @@ from market_regime_alpha.market.ports import (
     MarketProvider,
     CaptureRequest,
     ProviderResponse,
+    NormalizerContract,
+)
+from market_regime_alpha.market.ports.archive_operations import (
+    ArchiveTerminalCaptureReconciliationReadPort,
 )
 from market_regime_alpha.market.domain import (
     ArchiveSliceStatus,
@@ -46,7 +50,7 @@ from market_regime_alpha.runtime.domain import (
     ScheduleSpec,
     StepSpec,
 )
-from market_regime_alpha.runtime.ports import AttemptClaim, RunTrace
+from market_regime_alpha.runtime.ports import AttemptClaim, RunTrace, StepTrace
 from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 from market_regime_alpha.shared.identity import TradingSessionId
@@ -58,7 +62,8 @@ from market_regime_alpha.market.application.prospective_archive import (
     ProspectiveArchiveInstrument, build_target_aligned_prospective_manifest,
 )
 from market_regime_alpha.market.domain import ProspectiveArchiveSession
-from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockArchiveQuery
+from market_regime_alpha.infrastructure.providers.baostock_archive import BaoStockArchiveQuery, BaoStockArchiveQueryKind
+from market_regime_alpha.infrastructure.providers.baostock_acquisition_readiness import preopen_empty_5m_readiness
 
 
 _IMPLEMENTATION = "market.prospective_archive"
@@ -441,6 +446,7 @@ class ProspectiveArchiveRuntimeApplication:
         operations: _ArchiveOperations,
         database_clock: MarketDatabaseClock,
         due_query: Callable[[UUID], tuple[UUID, ...]],
+        terminal_capture_reconciliation: ArchiveTerminalCaptureReconciliationReadPort | None = None,
         archive_inspection: ArchiveInspectionPort | None = None,
         archive_verification: ArchiveVerificationPort | None = None,
         continuity: ProspectiveContinuityReadPort | None = None,
@@ -457,6 +463,7 @@ class ProspectiveArchiveRuntimeApplication:
         self._operations = operations
         self._database_clock = database_clock
         self._due_query = due_query
+        self._terminal_capture_reconciliation = terminal_capture_reconciliation
         self._archive_inspection = archive_inspection
         self._archive_verification = archive_verification
         self._continuity = continuity
@@ -1045,7 +1052,8 @@ class ProspectiveArchiveRuntimeApplication:
                       and (step.latest_attempt_error_code == "DEADLINE_EXHAUSTED"
                            or (step.latest_attempt_error_code == "NORMALIZATION_BINDING_REJECTED"
                                and run.window_end is not None
-                               and run.window_end < self._database_clock.now())))
+                               and run.window_end < self._database_clock.now())
+                           or self._reconcile_pre_open_empty_failure(plan, run, step)))
                   for step in trace.steps
               )):
             # Read-only registration after an elapsed, known failed capture.
@@ -1056,6 +1064,75 @@ class ProspectiveArchiveRuntimeApplication:
             raise ProspectiveRuntimeIntegrityError(
                 f"prospective Runtime Run {run.run_id} is {trace.run_state}"
             )
+
+    def _reconcile_pre_open_empty_failure(
+        self, plan: ProspectiveArchiveRuntimePlan, run: ProspectiveRuntimeRunPlan,
+        step: StepTrace,
+    ) -> bool:
+        """Recognize only the historical V3 empty-batch defect, without writes.
+
+        The known Capture effect remains CAPTURED, its normalization/Attempt/Run
+        remain failed, and its slice is left to the existing overdue owner. No
+        Provider call, normalizer command, label, or successful observation is
+        manufactured. Every other integrity/unknown failure remains blocked.
+        """
+        if (step.latest_attempt_error_code != "NORMALIZER_OUTPUT_REJECTED"
+                or run.schedule_slot != "OUTCOME_PRE_OPEN"
+                or run.window_end is None or run.window_end >= self._database_clock.now()
+                or self._terminal_capture_reconciliation is None
+                or self._manifest_reader is None or self._trading_sessions is None):
+            return False
+        item = next((item for item in run.slices
+                     if step.step_key == f"capture-{item.plan.ordinal:04d}"), None)
+        if item is None:
+            return False
+        evidence = self._terminal_capture_reconciliation.terminal_normalizer_failure(
+            run_id=run.run_id, step_id=step.step_id, market_archive_id=plan.market_archive_id,
+            market_archive_slice_id=item.plan.market_archive_slice_id, fence_token=step.current_fence,
+        )
+        if evidence is None:
+            return False
+        capture, artifact = evidence.capture, evidence.artifact
+        # This immutable historical contract must not track a later normalizer.
+        normalizer_v3 = NormalizerContract(
+            implementation="market.baostock_archive", version="3",
+            implementation_sha256="7237fe9296f1e247d81d4cac0b3bfbc6788f38dbfd36d99028640df11b4d5e24",
+        )
+        if (capture.provider_product_id != item.capture_request.provider_product_id
+                or capture.capture_key != item.capture_request.capture_key
+                or capture.request_hash.value != canonical_json_sha256(item.capture_request)
+                or capture.artifact_id != artifact.artifact_id
+                or evidence.capture_result_hash != canonical_json_sha256({
+                    "capture": capture, "artifact_hash": artifact.content_sha256,
+                    "artifact_size": artifact.size_bytes,
+                })
+                or evidence.normalization_request_hash != canonical_json_sha256({
+                    "capture_id": capture.capture_id, "normalizer_contract": normalizer_v3,
+                })):
+            return False
+        content = self._manifest_reader(artifact.content_sha256, artifact.size_bytes)
+        if len(content) != artifact.size_bytes or sha256_bytes(content) != artifact.content_sha256:
+            raise ProspectiveRuntimeIntegrityError("failed Capture source Artifact bytes differ")
+        query = BaoStockArchiveQuery.from_resource(item.capture_request.resource)
+        if (query.kind is not BaoStockArchiveQueryKind.HISTORY_5M_RAW
+                or query.start_date is None or query.start_date != query.end_date):
+            return False
+        readiness = preopen_empty_5m_readiness(capture, content, query, self._trading_sessions)
+        if readiness is None:
+            return False
+        generation = ArchiveOperatorManifest.from_json(plan.config_bytes.decode()).start_request.prospective_generation
+        if generation is None:
+            return False
+        session = self._trading_sessions.exact(
+            exchange=generation.exchange, session_id=TradingSessionId(generation.outcome_session_id),
+        )
+        return (
+            session.session_id.value == generation.outcome_session_id
+            and session.session_date == query.start_date
+            and run.window_start is not None
+            and run.window_start <= capture.temporal.capture_started_at
+            <= capture.temporal.capture_completed_at <= run.window_end < session.open_at
+        )
 
     def _execute_predeclare(
         self,

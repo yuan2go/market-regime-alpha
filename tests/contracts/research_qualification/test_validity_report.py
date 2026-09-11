@@ -24,7 +24,9 @@ def canonical_fixture(day=date(2026, 9, 14)):
                         ("feature_definition", "feature"), ("target_definition", "target")):
         value = protocol['identities'][name]
         identities[alias] = {name + '_id': UUID(value['id']), 'content_sha256': value['content_sha256']}
-    identities['experimental_model_use'].update(valid_from=cutoff-timedelta(days=30), expires_at=cutoff+timedelta(days=30))
+    identities['experimental_model_use'].update(valid_from=cutoff-timedelta(days=30), expires_at=cutoff+timedelta(days=30),
+                                                registered_at=cutoff-timedelta(days=30), revoked_at=None,
+                                                model_version_id=UUID(protocol['identities']['model_version']['id']))
     predictions = [{"commitment_id": UUID(int=i), "instrument_id": UUID(protocol["frozen_population_semantics"]["instrument_ids"][i-1]),
                     "point_estimate": model, "baseline_point_estimate": baseline,
                     "forecast_status": "AVAILABLE", "baseline_status": "AVAILABLE"}
@@ -37,6 +39,7 @@ def canonical_fixture(day=date(2026, 9, 14)):
     counts = {key: 3 for key in ('sampled','eligible','feature_ready','model_prediction','baseline_prediction','common_prediction')}
     counts['sampled'] = 32
     cycle = {'prediction_id': UUID(int=50), 'target_session': day, 'plan_sha256': 'a'*64,
+             'experimental_model_use_id': UUID(protocol['identities']['experimental_model_use']['id']),
              'frozen_identities': identities, 'frozen_plan': {'plan':deepcopy(protocol['frozen_population_semantics'])},
              'publication': {'input_cutoff': cutoff, 'decision_time': cutoff, 'published_at': start-timedelta(hours=1),
                              'target_session_id': UUID(protocol['first_eligible_target_session_id']),
@@ -57,7 +60,7 @@ def canonical_fixture(day=date(2026, 9, 14)):
                 {'session_date':date(2026,9,14),'session_id':UUID(protocol['first_eligible_target_session_id']),
                  'open_at':datetime.fromisoformat(protocol['first_eligible_target_start']),
                  'close_at':datetime(2026,9,14,7,tzinfo=timezone.utc)}]
-    observations = {'cycles':[cycle], 'unavailable':[], 'observed_at':end+timedelta(minutes=1)}
+    observations = {'cycles':[cycle], 'unavailable':[], 'observed_at':end+timedelta(minutes=1), 'business_writes':0}
     return observations, protocol, calendar
 
 
@@ -181,7 +184,10 @@ def test_cli_readonly_report_dispatch_and_protocol_refusal(monkeypatch):
 
     @contextmanager
     def bootstrap(settings):
-        yield SimpleNamespace(daily_prediction_reads=SimpleNamespace(validity_calendar=lambda: calendar))
+        yield SimpleNamespace(daily_prediction_reads=SimpleNamespace(
+            validity_calendar=lambda: calendar,
+            experimental_model_use_record=lambda identity: observations['cycles'][0]['frozen_identities']['experimental_model_use']),
+            calendar_continuity_reads=SimpleNamespace(calendar_coverage=lambda provider, observed_at: None))
 
     def read(app, **filters):
         calls.append(filters)
@@ -195,10 +201,64 @@ def test_cli_readonly_report_dispatch_and_protocol_refusal(monkeypatch):
     result = json.loads(output.getvalue())
     assert result['business_writes'] == 0
     assert result['ALPHA_PROVEN'] == 'NO'
-    assert set(calls[0]) == {'model_version_id','experimental_model_use_id','target_definition_id'}
+    assert set(calls[0]) == {'model_version_id','target_definition_id'}
     assert not error.getvalue()
     assert main(['research','validity','daily','--protocol-version','99'],environ=env,stdout=StringIO(),stderr=error) == 2
     assert 'UNDECLARED_VALIDITY_PROTOCOL' in error.getvalue()
+
+
+def test_operational_days_cross_use_without_joining_formal_population():
+    observations, protocol, calendar = canonical_fixture()
+    operational = deepcopy(observations)
+    old = deepcopy(operational['cycles'][0])
+    old['target_session'] = date(2026, 9, 10)
+    old['experimental_model_use_id'] = UUID(int=999)
+    operational['cycles'].append(old)
+    result = validity_report(observations, protocol, calendar, operational_observations=operational)
+    assert result['operational_session_count'] == 2
+    assert result['predeclared_session_count'] == 1
+    assert result['common_observation_count'] == 3
+    assert result['session_cohort'] == [date(2026, 9, 14)]
+    assert result['sustained_consecutive_sessions'] == 2
+    operational['cycles'][-1]['replay']['matched'] = False
+    with pytest.raises(ArtifactIntegrityError, match='OPERATIONAL_REPLAY_MISMATCH'):
+        validity_report(observations, protocol, calendar, operational_observations=operational)
+    operational['business_writes'] = 1
+    with pytest.raises(ArtifactIntegrityError, match='OPERATIONAL_OBSERVATION_WRITES_REFUSED'):
+        validity_report(observations, protocol, calendar, operational_observations=operational)
+
+
+def test_daily_health_reads_backup_receipts_without_classifying_manual_as_scheduled(monkeypatch, tmp_path):
+    from contextlib import contextmanager
+    from io import StringIO
+    import json
+    from types import SimpleNamespace
+    import market_regime_alpha.interfaces.cli.daily as cli
+    import market_regime_alpha.interfaces.daily_health as health
+    from market_regime_alpha.interfaces.cli.main import main
+
+    @contextmanager
+    def bootstrap(settings):
+        yield SimpleNamespace(prospective_health=SimpleNamespace(inspect=lambda *args, **kwargs: {'business_writes':0}))
+
+    monkeypatch.setattr(cli, 'bootstrap_application', bootstrap)
+    monkeypatch.setattr(health, 'daily_health', lambda *args, **kwargs: {'business_writes':0})
+    directory = tmp_path / 'refresh-manual'
+    directory.mkdir()
+    (directory / 'events.json').write_text(json.dumps([
+        {'phase':'invocation', 'invocation_kind':'MANUAL_CONTROLLED_RECOVERY', 'observed_at':'2026-09-11T01:00:00+00:00'},
+        {'phase':'failed', 'reason':'EXPIRED_ATTEMPT', 'observed_at':'2026-09-11T01:00:01+00:00'},
+    ]))
+    out, error = StringIO(), StringIO()
+    env = {'MRA_DATABASE_URL':'postgresql:///unused_test', 'MRA_ARTIFACT_ROOT':str(tmp_path)}
+    assert main(['research','daily','health','--series-code','fixture','--backup-receipts-directory',str(tmp_path)],
+                environ=env, stdout=out, stderr=error) == 0
+    result = json.loads(out.getvalue())['scheduled_backup']
+    assert result['business_writes'] == 0
+    assert result['SCHEDULED_BACKUP_RELIABILITY']['scheduled_fires'] == 0
+    assert result['SCHEDULED_BACKUP_RELIABILITY']['state'] == 'NOT_ESTIMABLE'
+    assert result['manual_receipt_count'] == 1
+    assert result['receipts'][0]['reason_code'] == 'EXPIRED_ATTEMPT'
 
 
 @pytest.mark.parametrize('change', ['threshold','candidate','population','session_date'])

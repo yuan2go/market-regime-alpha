@@ -4,6 +4,14 @@ from tests.contracts.research_qualification.archive_campaign_fixture import _con
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolated_calendar_handoff(monkeypatch):
+    # Prediction fixtures have their own explicit session roster; calendar
+    # Provider/Runtime acquisition has a separate owner integration test.
+    monkeypatch.setattr("market_regime_alpha.interfaces.daily_service.refresh_calendar", lambda *_, **__: {
+        "state": "NOT_DUE", "reason_code": "SYNTHETIC_TEST_CALENDAR", "coverage": {"state": "VERIFIED"}})
+
+
 def test_generic_daily_target_fit_model_validation_and_replay(target_database_url, tmp_path):
     settings = TargetSettings(target_database_url, tmp_path / "artifacts")
     bootstrap_database(settings)
@@ -526,7 +534,7 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert app.daily_prediction_reads.operational_health(plan)["runtime"][
             "failed_count"
         ] >= 1
-        from market_regime_alpha.interfaces.daily_research import decode_daily_plan
+        from market_regime_alpha.interfaces.daily_research import decode_daily_plan, encode_daily_plan
         from market_regime_alpha.runtime.errors import RuntimeStateConflictError
 
         historical = app.daily_prediction_reads.outcome_work_items()
@@ -537,6 +545,46 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         )
         assert old_item.plan_content is not None
         assert decode_daily_plan(old_item.plan_content) == plan
+        future_start = app.daily_prediction_reads.now() + timedelta(days=1)
+        successor_use = replace(use, experimental_model_use_id=uuid4(), valid_from=future_start,
+                                expires_at=future_start + timedelta(days=30))
+        app.research_models.register_experimental_use(successor_use, _context("future-daily-use"))
+        reloaded_use = app.daily_prediction_reads.experimental_model_use_record(successor_use.experimental_model_use_id)
+        assert reloaded_use["content_sha256"] == successor_use.content_sha256
+        assert reloaded_use["valid_from"] == future_start and reloaded_use["revoked_at"] is None
+        uses_health = app.daily_prediction_reads.operational_health(
+            replace(plan, experimental_model_use_id=successor_use.experimental_model_use_id))["model_uses"]
+        by_use = {item["experimental_model_use_id"]: item for item in uses_health}
+        assert by_use[use.experimental_model_use_id]["state"] == "REVOKED"
+        assert not by_use[use.experimental_model_use_id]["current_template"]
+        assert old_item.run_id in {item["run_id"] for item in by_use[use.experimental_model_use_id]["frozen_outcome_work"]}
+        assert by_use[successor_use.experimental_model_use_id]["state"] == "NOT_YET_EFFECTIVE"
+        assert by_use[successor_use.experimental_model_use_id]["current_template"]
+        assert not by_use[successor_use.experimental_model_use_id]["available_for_new_prediction"]
+        assert by_use[successor_use.experimental_model_use_id]["frozen_outcome_work"] == []
+        successor_template = replace(plan, experimental_model_use_id=successor_use.experimental_model_use_id,
+                                     code_sha="b" * 40)
+        discovered = app.daily_prediction_reads.session_work_items(
+            successor_template, plan.input_session_id, plan.target_session_id)
+        assert len(discovered) == 1 and discovered[0].plan_content == encode_daily_plan(plan)
+        assert current_daily_plan(app, successor_template) == plan
+        assert app.daily_prediction_reads.session_work_items(successor_template, uuid4(), uuid4()) == ()
+        with app._pool.connection(read_only=True) as connection:
+            rollover_before = connection.execute("""SELECT
+                (SELECT count(*) FROM mra.command_receipt), (SELECT count(*) FROM mra.runtime_run),
+                (SELECT count(*) FROM mra.forecast), (SELECT count(*) FROM mra.market_target_outcome)""").fetchone()
+        rollover_tick = daily_tick(app, successor_template, NoProviderEffect(), worker_id="daily-fixture",
+                                  maximum_steps=1, before_action=lambda: None)
+        assert rollover_tick["state"] == "PREDICTION_PUBLISHED"
+        assert rollover_tick["result"].run_id == plan.runtime_run_id
+        assert rollover_tick["health"]["selected_plan"]["experimental_model_use_id"] == plan.experimental_model_use_id
+        assert any(item["current_template"] and item["experimental_model_use_id"] == successor_use.experimental_model_use_id
+                   for item in rollover_tick["health"]["model_uses"])
+        with app._pool.connection(read_only=True) as connection:
+            assert connection.execute("""SELECT
+                (SELECT count(*) FROM mra.command_receipt), (SELECT count(*) FROM mra.runtime_run),
+                (SELECT count(*) FROM mra.forecast), (SELECT count(*) FROM mra.market_target_outcome)""").fetchone() == rollover_before
+        assert app.daily_research.replay(plan)["matched"]
         with pytest.raises(RuntimeStateConflictError, match="MODEL_USE_UNAVAILABLE"):
             app.daily_research.execute(
                 replace(plan, prediction_id=uuid4()), worker_id="daily-fixture"

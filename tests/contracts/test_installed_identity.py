@@ -2,9 +2,13 @@
 
 from dataclasses import replace
 from hashlib import sha256
+import importlib.util
 import json
+import marshal
 import os
 from pathlib import Path
+import py_compile
+import sys
 from types import SimpleNamespace
 from uuid import UUID
 from zipfile import ZipFile
@@ -21,6 +25,7 @@ from market_regime_alpha.interfaces.prospective_operations import ProspectiveOpe
 
 @pytest.fixture
 def installed_scope(tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "dont_write_bytecode", sys.dont_write_bytecode)
     site = tmp_path / "site-packages"
     package = site / "market_regime_alpha"
     package.mkdir(parents=True)
@@ -135,15 +140,113 @@ def test_complete_package_roster_file_identity_and_permissions_cannot_drift(inst
         verified.require_unchanged(scope.config)
 
 
-def test_normal_generated_bytecode_does_not_change_verified_source_identity(installed_scope):
+def test_new_bytecode_after_verified_startup_is_an_installation_change(installed_scope):
     scope = installed_scope
     verified = identity.VerifiedInstallation.verify(scope.config)
     cache = scope.package / "__pycache__"
     cache.mkdir()
-    (cache / "__init__.cpython-312.pyc").write_bytes(b"disposable bytecode")
+    py_compile.compile(str(scope.package / "__init__.py"), doraise=True)
+    with pytest.raises(ValueError, match="IMPLEMENTATION_CHANGED"):
+        verified.require_unchanged(scope.config)
+
+
+@pytest.mark.parametrize("optimization", [0, 1, 2])
+@pytest.mark.parametrize("invalidation", list(py_compile.PycInvalidationMode))
+def test_startup_verifies_real_timestamp_and_hash_caches_for_exact_optimization(installed_scope, optimization, invalidation):
+    scope = installed_scope
+    py_compile.compile(str(scope.package / "__init__.py"), doraise=True,
+                       optimize=optimization, invalidation_mode=invalidation)
+    verified = identity.VerifiedInstallation.verify(scope.config)
+    assert sys.dont_write_bytecode is True
     verified.require_unchanged(scope.config)
-    (cache / "__init__.cpython-312.pyc").write_bytes(b"changed bytecode")
+
+
+def test_lazy_import_cannot_execute_changed_cache_after_verification(installed_scope):
+    scope = installed_scope
+    source = scope.package / "__init__.py"
+    cache = Path(py_compile.compile(str(source), doraise=True))
+    verified = identity.VerifiedInstallation.verify(scope.config)
+    original_source = source.read_bytes()
+    original_cache = cache.read_bytes()
+    # A valid original header can accompany an unrelated executable code object.
+    cache.write_bytes(original_cache[:16] + marshal.dumps(compile("x = 99\n", str(source), "exec")))
+    assert source.read_bytes() == original_source
+    with pytest.raises(ValueError, match="IMPLEMENTATION_CHANGED"):
+        verified.require_unchanged(scope.config)
+    with pytest.raises(ValueError, match="BYTECODE_SOURCE_CODE_MISMATCH"):
+        identity.VerifiedInstallation.verify(scope.config)
+
+
+@pytest.mark.parametrize("change", ["magic", "flags", "source_header", "wrong_tag", "wrong_optimization", "orphan", "trailing", "not_code"])
+def test_unqualified_bytecode_fails_complete_startup_verification(installed_scope, change):
+    scope = installed_scope
+    source = scope.package / "__init__.py"
+    cache = Path(py_compile.compile(str(source), doraise=True))
+    content = cache.read_bytes()
+    if change == "magic":
+        cache.write_bytes(b"BAD!" + content[4:])
+    elif change == "flags":
+        cache.write_bytes(content[:4] + (2).to_bytes(4, "little") + content[8:])
+    elif change == "source_header":
+        cache.write_bytes(content[:8] + b"\0" * 8 + content[16:])
+    elif change == "wrong_tag":
+        cache.rename(cache.with_name("__init__.cpython-999.pyc"))
+    elif change == "wrong_optimization":
+        cache.rename(cache.with_name(f"__init__.{sys.implementation.cache_tag}.opt-9.pyc"))
+    elif change == "orphan":
+        cache.rename(cache.with_name(f"absent.{sys.implementation.cache_tag}.pyc"))
+    elif change == "trailing":
+        cache.write_bytes(content + b"unverified trailer")
+    else:
+        cache.write_bytes(content[:16] + marshal.dumps({"not": "code"}))
+    with pytest.raises(ValueError, match="BYTECODE_"):
+        identity.VerifiedInstallation.verify(scope.config)
+
+
+def test_source_only_lazy_import_does_not_create_unverified_bytecode(installed_scope):
+    scope = installed_scope
+    verified = identity.VerifiedInstallation.verify(scope.config)
+    source = scope.package / "__init__.py"
+    specification = importlib.util.spec_from_file_location("disposable_identity_fixture", source)
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    assert module.x == 1
+    assert not (scope.package / "__pycache__").exists()
     verified.require_unchanged(scope.config)
+
+
+@pytest.mark.parametrize("change", ["allow_writes", "external_cache"])
+def test_running_bytecode_policy_cannot_drift(installed_scope, monkeypatch, change):
+    verified = identity.VerifiedInstallation.verify(installed_scope.config)
+    if change == "allow_writes":
+        monkeypatch.setattr(sys, "dont_write_bytecode", False)
+    else:
+        monkeypatch.setattr(sys, "pycache_prefix", "/tmp/unverified-external-cache")
+    with pytest.raises(ValueError, match="BYTECODE_POLICY_CHANGED"):
+        verified.require_unchanged(installed_scope.config)
+
+
+def test_external_bytecode_lookup_is_rejected_at_startup(installed_scope, monkeypatch):
+    monkeypatch.setattr(sys, "pycache_prefix", "/tmp/unverified-external-cache")
+    with pytest.raises(ValueError, match="EXTERNAL_BYTECODE_CACHE_UNSUPPORTED"):
+        identity.VerifiedInstallation.verify(installed_scope.config)
+
+
+@pytest.mark.parametrize("replacement", [False, 0, -0.0])
+def test_bytecode_comparison_preserves_constant_type_and_signed_zero(replacement):
+    expected = compile("value = 0.0\n", __file__, "exec", dont_inherit=True)
+    changed = expected.replace(co_consts=(replacement, None))
+    assert not identity._equivalent_code(changed, expected)
+
+
+def test_bytecode_comparison_checks_nested_functions_exception_table_and_filename(tmp_path):
+    source = tmp_path / "nested.py"
+    source.write_text("def f():\n    try:\n        return 1\n    except Exception:\n        return 2\n")
+    expected = compile(source.read_bytes(), str(source), "exec", dont_inherit=True)
+    function = expected.co_consts[0]
+    for changed in (function.replace(co_consts=(None, 9, 2)), function.replace(co_exceptiontable=b""),
+                    function.replace(co_filename=str(tmp_path / "different.py"))):
+        assert not identity._equivalent_code(expected.replace(co_consts=(changed, None)), expected)
 
 
 @pytest.mark.parametrize("changed", ("receipt", "wheel", "metadata", "new_metadata"))

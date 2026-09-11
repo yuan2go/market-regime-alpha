@@ -11,7 +11,7 @@ from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from typing import Any
 from uuid import UUID
 
-from market_regime_alpha.research_qualification.domain.validity_protocol import classify_cohort, instant, require_frozen_protocol
+from market_regime_alpha.research_qualification.domain.validity_protocol import classify_cohort, cohort_capacity, instant, require_frozen_protocol
 from market_regime_alpha.research_qualification.domain.validity_readiness import readiness_matrix, walk_forward_readiness
 from market_regime_alpha.research_qualification.domain.validity_statistics import ValidityPair, validity_statistics
 from market_regime_alpha.research_qualification.domain.validity_temporal import temporal_integrity
@@ -139,7 +139,10 @@ def _session(cycle: dict[str, Any], protocol: dict[str, Any]) -> tuple[dict[str,
 
 
 def validity_report(observations: dict[str, Any], protocol: dict[str, Any], calendar: list[dict[str, Any]], *,
-                    target_session_from: date | None = None, target_session_to: date | None = None) -> dict[str, Any]:
+                    target_session_from: date | None = None, target_session_to: date | None = None,
+                    model_use: dict[str, Any] | None = None,
+                    calendar_coverage_witness: dict[str, Any] | None = None,
+                    operational_observations: dict[str, Any] | None = None) -> dict[str, Any]:
     require_frozen_protocol(protocol)
     if target_session_from and target_session_to and target_session_from > target_session_to:
         raise ValueError("INVALID_SESSION_RANGE")
@@ -177,7 +180,14 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
     filtered = target_session_from is not None or target_session_to is not None
     selected = [row for row in rows if (target_session_from is None or row["target_session"] >= target_session_from)
                 and (target_session_to is None or row["target_session"] <= target_session_to)]
-    complete_dates = set(dates)
+    operational = observations if operational_observations is None else operational_observations
+    if operational_observations is not None and operational.get("business_writes") != 0:
+        raise ArtifactIntegrityError("VALIDITY_OPERATIONAL_OBSERVATION_WRITES_REFUSED")
+    for cycle in operational["cycles"]:
+        replay = cycle["replay"]
+        if replay.get("matched") is not True or replay.get("mismatch_count") != 0 or replay.get("business_writes") != 0:
+            raise ArtifactIntegrityError("VALIDITY_OPERATIONAL_REPLAY_MISMATCH")
+    complete_dates = {row["target_session"] for row in operational["cycles"]}
     streak = best = 0
     for day in closed:
         streak = streak + 1 if day in complete_dates else 0
@@ -194,20 +204,19 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
     published = [cycle["publication"] for cycle in cycles if cycle["target_session"] >= first
                  and (end is None or cycle["target_session"] < end)]
     published.extend(row["publication"] for row in current_unavailable if row.get("publication") is not None)
-    calendar_by_date = {row["session_date"]: row for row in calendar}
     calendar_by_id = {str(row["session_id"]): row for row in calendar}
     timely = sum(instant(row["published_at"]) <= instant(calendar_by_id[str(row["target_session_id"])]["open_at"])
                  for row in published)
     sampled = sum(row["population"]["sampled"] for row in current_rows) + sum(row["sampled"] for row in current_unavailable)
-    use = cycles[0]["frozen_identities"]["experimental_model_use"] if cycles else None
-    lifecycle: dict[str, Any] = {"state": "NOT_OBSERVED", "reason_code": "NO_COMPLETED_CANONICAL_MODEL_USE_BINDING"}
-    if use is not None:
-        lifecycle = {"valid_from": use["valid_from"], "expires_at": use["expires_at"],
-                     "state": "ACTIVE" if instant(observations["observed_at"]) < instant(use["expires_at"]) else "EXPIRED",
-                     "known_future_cohort_sessions_before_expiry": sum(day >= first and instant(row["open_at"]) < instant(use["expires_at"])
-                                                                       for day, row in calendar_by_date.items()),
-                     "known_calendar_through": max(calendar_by_date),
-                     "reason_code": "NO_EXTENSION_OR_NEW_MODEL_USE_AUTHORIZED; FUTURE_COHORT_CAPACITY_NOT_ASSUMED"}
+    use = model_use if model_use is not None else cycles[0]["frozen_identities"]["experimental_model_use"] if cycles else None
+    # Publication does not prove that unfinished Runtime/Outcome work can still
+    # complete. Preserve it in the report, but never assume recovery or replace
+    # its frozen population with the template's expected 32 members.
+    unavailable_dates = tuple(sorted(row["target_session"] for row in current_unavailable))
+    capacity = cohort_capacity(protocol, calendar, use, observed_at=instant(observations["observed_at"]),
+                               observed_sessions=tuple(sorted({pair.session for pair in formal_pairs})),
+                               observed_observations=len(formal_pairs), unavailable_sessions=unavailable_dates,
+                               calendar_coverage_witness=calendar_coverage_witness)
     return {
         "schema": "canonical-research-validity-report-v1", "protocol": protocol, "observed_at": observations["observed_at"],
         "RESEARCH_VALIDITY_STATUS": "DESCRIPTIVE" if filtered else status,
@@ -222,7 +231,8 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
         "cohort_data_quality": {"publication_timeliness": _rate(timely, declared, "DECLARED_DAILY_REQUESTS_IN_PROTOCOL_COHORT"),
                                 "prediction_coverage": _rate(sum(row["denominators"]["model_prediction"] for row in published), sampled, "ALL_SAMPLED_IN_DECLARED_COHORT"),
                                 "evaluation_completion": _rate(len(current_rows), declared, "DECLARED_DAILY_REQUESTS_IN_PROTOCOL_COHORT")},
-        "model_use_lifecycle": lifecycle,
+        "model_use_lifecycle": capacity["model_use_lifecycle"],
+        "COHORT_CAPACITY_FEASIBILITY": capacity["state"], "cohort_capacity": capacity,
         "per_session": selected, "predeclared": formal, "post_hoc_descriptive": historic,
         "predecessor_protocol_descriptive": validity_statistics(predecessor_pairs, **kwargs),
         "post_hoc_policy": "NEW_HISTORICAL_STATISTICS_NEVER_MUTATE_OR_UPGRADE_FROZEN_EVALUATION",
@@ -230,6 +240,7 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
         "unavailable_sessions": observations["unavailable"], "planning_gaps": [day for day in closed if day >= first and day not in declared_dates],
         "canonical_observation_sha256": canonical_json_sha256(cycles), "canonical_observations": cycles,
         "operational_session_count": len(complete_dates), "predeclared_session_count": formal_session_count,
+        "operational_session_scope": "RECONCILED_CANONICAL_SESSIONS_ACROSS_MODEL_USES; SEPARATE_FROM_FORMAL_COHORT",
         "common_observation_count": len(formal_pairs), "sustained_consecutive_sessions": best,
         "sustained_current_streak": streak, "SUSTAINED_MULTI_DAY_PROOF": "PASS" if best >= 3 else "BLOCKED_BY_ELAPSED_REAL_TIME",
         "walk_forward": walk_forward_readiness(protocol, calendar, cycles, observed_at=instant(observations["observed_at"])), **readiness_matrix(),

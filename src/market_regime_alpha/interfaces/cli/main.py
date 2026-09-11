@@ -514,7 +514,9 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         code_sha=arguments.code_sha,
                         runtime_revision=arguments.runtime_revision,
                     )
-            if arguments.archive_command in {"inspect", "gap-report", "revision-report", "daily-health"}:
+            if arguments.archive_command in {
+                "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
+            }:
                 return archive_report(
                     application,
                     arguments.archive_id,
@@ -706,7 +708,9 @@ def _parser() -> argparse.ArgumentParser:
         if command in {"resume", "retry"}:
             mutation.add_argument("--operation-key", required=True)
             mutation.add_argument("--slice-id", action="append", type=UUID)
-    for command in ("inspect", "gap-report", "revision-report", "daily-health"):
+    for command in (
+        "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
+    ):
         inspection = archive_commands.add_parser(command)
         inspection.add_argument("--archive-id", required=True, type=UUID)
         inspection.add_argument("--expected-database-name", required=True)

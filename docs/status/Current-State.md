@@ -7,7 +7,35 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
-## Research Validity baseline
+## Operational reliability and cohort capacity
+
+The current correction keeps the 120-second tick budget, canonical Runtime,
+restricted principal and financial semantics. Installed identity is verified at
+startup and monitored before actions; receipt health reads use the existing
+command-kind index. Stage timing distinguishes framework work from Provider I/O.
+Backup/restart remains bounded and refuses unresolved Attempts or unknown effects.
+
+Actual Provider calendar Capture `da74567d-49ff-4e45-91bd-4c7291c50d50`
+was acquired on Sep-11 and normalized through the Market owner. Its complete
+Sep-11 through Dec-31 response establishes known calendar capacity. Protocol v2's
+old ModelUse expires on Oct-08 before the session opens: only 12 eligible real
+sessions and at most 384 observations remain available against its 20/500 floors.
+This is a lifecycle failure, not a request to wait for more observations.
+
+The read-only feasibility projection and successor/cohort guards preserve v1/v2
+bytes. A long-lived successor Use and v3 require actual owner registration and a
+new database-clock declaration. The original database's authentication boundary
+currently prevents that registration; no runtime privilege is expanded and no
+v3 is declared from a fixture or an unregistered identity.
+
+The observed pre-open empty-response failure has a narrow positive-evidence
+reconciliation. The original terminal Run remains failed. Future successful
+empty Captures before any interval matures use a separate readiness contract;
+they do not fabricate normalization, SourceGap or labels. Mature empty responses
+retain the original normalizer's SourceGap semantics. Deployment and sustained
+operation require separate current installed observations.
+
+## Previous Research Validity baseline cutoff
 
 The read-only baseline is implemented from main
 `c61a133995c015530a992a87421e750e64f4d5ef`. `mra research validity daily`

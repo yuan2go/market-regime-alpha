@@ -11,6 +11,7 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
 from tests.contracts.research_qualification.test_daily_vertical_postgres import (
     test_completed_model_is_consumed_without_backtest_and_publication_is_replayable as vertical,
+    _isolated_calendar_handoff,  # noqa: F401
 )
 
 from market_regime_alpha.infrastructure.postgres.runtime_privileges import WRITE_TABLES, REFERENCE_LOCKS, inspect_runtime_principal

@@ -6,15 +6,17 @@ from dataclasses import replace
 from datetime import timedelta
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Callable
-from uuid import uuid5
+from uuid import UUID, uuid5
 
 from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission
 from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan, collect_daily
+from market_regime_alpha.interfaces.calendar_continuity import refresh_calendar
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations, decode_daily_plan, encode_daily_plan
 from market_regime_alpha.research_qualification.domain.daily_prediction import DailyPredictionPlan
 from market_regime_alpha.research_qualification.domain.daily_inputs import DailyInputState
 from market_regime_alpha.research_qualification.ports.daily_prediction import (
     DailyOutcomeWorkItem,
+    DailySessionWorkItem,
 )
 from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
@@ -51,15 +53,20 @@ def prepare_pending_daily_recovery(app: TargetApplication, session: Any) -> None
 def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) -> DailyPredictionPlan:
     input_session, target_session, now = app.daily_prediction_reads.current_sessions()
     identity = uuid5(template.experimental_model_use_id, "daily:" + str(input_session) + ":" + str(target_session))
-    frozen = app.daily_prediction_reads.run_plan_content(uuid5(identity, "prediction-runtime"))
-    if frozen is None:
-        frozen = app.daily_prediction_reads.run_plan_content(uuid5(identity, "abstention-runtime"))
-    if frozen is not None:
-        plan = decode_daily_plan(frozen)
-        _same_template(plan, template, installed_handoff=True)
-        if (plan.prediction_id, plan.input_session_id, plan.target_session_id) != (identity, input_session, target_session):
+    frozen_plans: dict[UUID, DailyPredictionPlan] = {}
+    for item in app.daily_prediction_reads.session_work_items(template, input_session, target_session):
+        plan = _historical_session_plan(item)
+        _same_template(plan, template, installed_handoff=True, model_use_handoff=True)
+        if (plan.input_session_id, plan.target_session_id) != (input_session, target_session):
             raise ArtifactIntegrityError("daily frozen Run and input/target identities differ")
-        return plan
+        app.daily_prediction_reads.validate_configuration(plan)
+        if plan.prediction_id in frozen_plans and frozen_plans[plan.prediction_id] != plan:
+            raise ArtifactIntegrityError("DAILY_SESSION_FROZEN_PLANS_CONFLICT")
+        frozen_plans[plan.prediction_id] = plan
+    if len(frozen_plans) > 1:
+        raise ArtifactIntegrityError("DAILY_SESSION_MULTIPLE_FROZEN_PREDICTIONS")
+    if frozen_plans:
+        return next(iter(frozen_plans.values()))
     original = None
     for phase in ("population", "input"):
         for ordinal, _, _, content in app.daily_prediction_reads.collection_rounds(identity, phase):
@@ -87,13 +94,37 @@ def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) ->
     return replace(plan, input_content_sha256=ready.content_sha256)
 
 
-def _same_template(plan: DailyPredictionPlan, template: DailyPredictionPlan, *, installed_handoff: bool = False) -> None:
+def _same_template(plan: DailyPredictionPlan, template: DailyPredictionPlan, *, installed_handoff: bool = False,
+                   model_use_handoff: bool = False) -> None:
     changed = {name for name in plan.__dataclass_fields__ if getattr(plan, name) != getattr(template, name)}
     allowed = {"prediction_id", "input_session_id", "target_session_id", "input_cutoff", "decision_time", "input_content_sha256"}
     if installed_handoff:
         allowed |= {"code_sha", "code_artifact"}
+    if model_use_handoff:
+        allowed.add("experimental_model_use_id")
     if changed - allowed:
         raise ArtifactIntegrityError("DAILY_FROZEN_CONFIGURATION_CHANGED")
+
+
+def _historical_session_plan(item: DailySessionWorkItem) -> DailyPredictionPlan:
+    """A discovered identity is not authority until its original Run/config agree."""
+    plan = decode_daily_plan(item.plan_content)
+    identity = uuid5(plan.experimental_model_use_id,
+                     "daily:" + str(plan.input_session_id) + ":" + str(plan.target_session_id))
+    phase = item.phase
+    schedule = "model" if phase == "prediction" else "abstention"
+    fire = "daily:" if phase == "prediction" else "daily-abstention:"
+    if (phase not in {"prediction", "abstention"}
+        or item.prediction_id != plan.prediction_id or plan.prediction_id != identity
+        or item.experimental_model_use_id != plan.experimental_model_use_id
+        or item.run_id != uuid5(identity, phase + "-runtime")
+        or item.schedule_id != uuid5(plan.experimental_model_use_id, "daily-" + phase + "-schedule")
+        or item.schedule_code != "daily-" + schedule + "-" + plan.experimental_model_use_id.hex
+        or item.fire_key != fire + str(identity) or item.code_sha != plan.code_sha
+        or item.config_sha256 != sha256(item.plan_content).hexdigest()
+        or item.plan_content != encode_daily_plan(plan)):
+        raise ArtifactIntegrityError("DAILY_SESSION_FROZEN_IDENTITY_CHANGED")
+    return plan
 
 
 def _historical_outcome_plan(item: DailyOutcomeWorkItem) -> DailyPredictionPlan:
@@ -137,8 +168,12 @@ def daily_tick(
     """No sleeping, dates inferred by neither process nor supervisor; DB clock/calendar decide."""
     before_action()
     reads = app.daily_prediction_reads
+    selected_plan = template
+    calendar: dict[str, Any] | None = None
 
     def finish(payload: dict[str, Any]) -> dict[str, Any]:
+        if calendar is not None:
+            payload["calendar_continuity"] = calendar
         payload.setdefault(
             "delivery",
             {
@@ -157,7 +192,7 @@ def daily_tick(
             },
         )
         try:
-            payload["health"] = reads.operational_health(template)
+            payload["health"] = reads.operational_health(selected_plan, template=template)
         except (AttributeError, RuntimeError, ValueError) as exc:
             payload["health"] = {
                 "state": "HEALTH_QUERY_FAILED",
@@ -171,6 +206,8 @@ def daily_tick(
     def finish_abstention(
         abstention_plan: DailyPredictionPlan, reason: str
     ) -> dict[str, Any]:
+        nonlocal selected_plan
+        selected_plan = abstention_plan
         payload = _abstain(
             app,
             abstention_plan,
@@ -275,6 +312,7 @@ def daily_tick(
                     )
                     if result["state"] == "COLLECTION_PROGRESS":
                         outcome_action = completed[-1]
+                        selected_plan = plan
                 else:
                     completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
                 continue
@@ -312,6 +350,7 @@ def daily_tick(
             )
             continue
         outcome_action = {**status, "state": "SETTLEMENT_PROGRESS", "result": settlement}
+        selected_plan = plan
         completed.append(outcome_action)
     if outcome_action is not None:
         return finish({"state": "OUTCOME_PROGRESS", "outcomes": completed})
@@ -330,6 +369,11 @@ def daily_tick(
                 "pending": completed,
             }
         )
+    calendar = refresh_calendar(app, provider_product_id=template.provider_product_id,
+        code_sha=template.code_sha, provider=provider, worker_id=worker_id, before_action=before_action,
+        experimental_model_use_id=template.experimental_model_use_id)
+    if calendar["state"] == "BLOCKED" or calendar.get("coverage", {}).get("state") != "VERIFIED":
+        return finish({"state": "CALENDAR_CONTINUITY_BLOCKED", "reason_code": calendar["reason_code"], "pending": completed})
     elapsed = reads.missing_elapsed_session_pairs(template)
     if elapsed:
         input_session, target_session = elapsed[0]
@@ -345,6 +389,9 @@ def daily_tick(
         )
     try:
         plan = current_daily_plan(app, template)
+        selected_plan = plan
+    except (ArtifactIntegrityError, RuntimeNotFoundError, ValueError) as exc:
+        return finish({"state": "PREDICTION_CONFIGURATION_BLOCKED", "reason_code": str(exc), "pending": completed})
     except RuntimeStateConflictError as exc:
         if str(exc) != (
             "RUNTIME_STATE_CONFLICT: DAILY_CALENDAR_COVERAGE_INCOMPLETE"
@@ -356,6 +403,15 @@ def daily_tick(
             "pending": completed,
         })
     if reads.run_plan_content(uuid5(plan.prediction_id, "abstention-runtime")) is not None:
+        if plan.experimental_model_use_id != template.experimental_model_use_id:
+            trace = app.runtime.inspect_run(uuid5(plan.prediction_id, "abstention-runtime"))
+            if trace.run_state != "SUCCEEDED":
+                return finish({"state": "ABSTENTION_RECOVERY_REQUIRED", "prediction_id": plan.prediction_id,
+                    "runtime": trace, "automatic_retry": False, "pending": completed,
+                    "reason_code": "FROZEN_MODEL_USE_HANDOFF_REQUIRES_ORIGINAL_RECOVERY"})
+            reason = DailyResearchOperations(app, reads, before_action=before_action).frozen_abstention_reason(plan)
+            return finish({"state": "ABSTAINED", "reason_code": reason, "prediction_id": plan.prediction_id,
+                "runtime": trace, "pending": completed})
         for phase in ("population", "input"):
             rounds=reads.collection_rounds(plan.prediction_id,phase)
             if rounds and rounds[-1][1] in {'QUEUED','RUNNING'}:
@@ -367,13 +423,16 @@ def daily_tick(
     existing = reads.run_plan_content(plan.runtime_run_id)
     if existing is not None:
         trace = app.runtime.inspect_run(plan.runtime_run_id)
-        if trace.run_state not in {"QUEUED", "RUNNING", "SUCCEEDED"}:
+        if trace.run_state not in {"QUEUED", "RUNNING", "SUCCEEDED"} or (
+            plan.experimental_model_use_id != template.experimental_model_use_id and trace.run_state != "SUCCEEDED"
+        ):
             return finish({
                 "state": "PREDICTION_RECOVERY_REQUIRED",
                 "failed_run_id": trace.run_id,
                 "run_state": trace.run_state,
                 "reason_codes": [step.latest_attempt_error_code for step in trace.steps if step.latest_attempt_error_code],
                 "automatic_retry": False,
+                "reason_code": "FROZEN_PREDICTION_REQUIRES_ORIGINAL_RECOVERY",
                 "pending": completed,
             })
     ready = reads.ready(plan)
@@ -426,12 +485,16 @@ def daily_tick(
                 plan,
                 "NO_FEATURE_READY_MEMBERS",
             )
-    with daily_research_admission(
-        prediction_id=plan.prediction_id, code_sha=plan.code_sha, config_sha256=sha256(encode_daily_plan(plan)).hexdigest()
-    ):
-        execution = DailyResearchOperations(app, reads, before_action=before_action).execute(
-            plan, worker_id=worker_id, maximum_steps=min(maximum_steps, 9)
-        )
+    if existing is not None and trace.run_state == "SUCCEEDED" and plan.experimental_model_use_id != template.experimental_model_use_id:
+        # Published work retains its original Use and bytes; rollover only reads it.
+        execution = trace
+    else:
+        with daily_research_admission(
+            prediction_id=plan.prediction_id, code_sha=plan.code_sha, config_sha256=sha256(encode_daily_plan(plan)).hexdigest()
+        ):
+            execution = DailyResearchOperations(app, reads, before_action=before_action).execute(
+                plan, worker_id=worker_id, maximum_steps=min(maximum_steps, 9)
+            )
     projection_state = "PREDICTION_PROGRESS"
     if execution.run_state == "SUCCEEDED":
         projection = reads.forecast_projection(plan)

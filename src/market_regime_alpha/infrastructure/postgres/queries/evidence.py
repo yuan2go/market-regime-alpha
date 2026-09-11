@@ -69,3 +69,41 @@ class PostgresEvidenceSnapshotPort:
         with self._pool.connection(read_only=True) as connection:
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             return read_evidence_snapshot(connection)
+
+
+def read_service_restart_state(connection: psycopg.Connection[Any]) -> dict[str, Any]:
+    """Inspect current fences/effects without recovering or reopening any Run."""
+    with connection.transaction():
+        connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        with connection.cursor(row_factory=dict_row) as cursor:
+            observed = cursor.execute("SELECT clock_timestamp() AS observed_at").fetchone()
+            attempts = cursor.execute("""
+                SELECT attempt.attempt_id, attempt.state, attempt.fence_token,
+                       attempt.lease_until, attempt.lease_until > statement_timestamp() AS lease_live,
+                       step.step_id, step.run_id, step.state AS step_state,
+                       step.current_fence, step.current_attempt_id, step.external_effect_class,
+                       run.state AS run_state, run.code_sha, run.config_hash
+                FROM mra.runtime_attempt attempt
+                JOIN mra.runtime_step step USING(step_id)
+                JOIN mra.runtime_run run USING(run_id)
+                WHERE attempt.state IN ('CLAIMED','RUNNING','RECONCILIATION_REQUIRED')
+                ORDER BY attempt.attempt_id
+            """).fetchall()
+            waiting = cursor.execute("""
+                SELECT run.run_id, run.state AS run_state, run.code_sha, run.config_hash,
+                       step.step_id, step.state AS step_state, step.current_fence,
+                       step.current_attempt_id, step.external_effect_class,
+                       step.terminal_reason_code
+                FROM mra.runtime_run run
+                LEFT JOIN mra.runtime_step step USING(run_id)
+                WHERE run.state='WAITING' OR step.state='WAITING'
+                ORDER BY run.run_id, step.ordinal
+            """).fetchall()
+            terminals = cursor.execute("""
+                SELECT state, count(*) AS count FROM mra.runtime_attempt
+                WHERE state IN ('SUCCEEDED','FAILED_TERMINAL','FAILED_RETRYABLE','ABANDONED')
+                GROUP BY state ORDER BY state
+            """).fetchall()
+    assert observed is not None
+    return {**observed, "unresolved_attempts": attempts, "waiting_work": waiting,
+            "historical_attempt_counts": terminals, "business_writes": 0}

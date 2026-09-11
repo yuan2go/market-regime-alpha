@@ -21,8 +21,10 @@ from market_regime_alpha.research_qualification.domain.model import ArtifactBind
 from market_regime_alpha.research_qualification.domain.targets import TargetDefinition
 from market_regime_alpha.research_qualification.domain.daily_inputs import DailyDataReady, freeze_data_ready
 from market_regime_alpha.research_qualification.domain.daily_prediction import DailyPopulationMember, DailyPredictionPlan
+from market_regime_alpha.research_qualification.domain.experimental_model_use import ExperimentalModelUseRecord
 from market_regime_alpha.research_qualification.ports.daily_prediction import (
     DailyOutcomeWorkItem,
+    DailySessionWorkItem,
 )
 from market_regime_alpha.research_qualification.ports.artifacts import ResearchArtifactByteStore
 from market_regime_alpha.runtime.errors import (
@@ -32,11 +34,72 @@ from market_regime_alpha.runtime.errors import (
 )
 
 
+_RESEARCH_DISPOSITION_SQL = """
+    WITH reviewed AS MATERIALIZED (
+        SELECT split_part(receipt.idempotency_key, ':', 2) AS prediction_key,
+               bool_or(receipt.result_aggregate_kind IS DISTINCT FROM 'ARTIFACT') AS invalid_receipt
+        FROM mra.command_receipt AS receipt
+        WHERE receipt.status = 'SUCCEEDED'
+          AND receipt.command_kind = 'REGISTER_ARTIFACT'
+          AND receipt.idempotency_key ~ '^daily:[0-9a-f-]{36}:research-disposition:'
+        GROUP BY split_part(receipt.idempotency_key, ':', 2)
+    )
+    SELECT count(*) FILTER (WHERE reviewed.prediction_key IS NULL),
+           count(*) FILTER (WHERE reviewed.prediction_key IS NOT NULL),
+           count(*) FILTER (WHERE reviewed.invalid_receipt)
+    FROM mra.runtime_run AS run
+    JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+    LEFT JOIN reviewed ON reviewed.prediction_key = split_part(run.fire_key, ':', 2)
+    WHERE schedule.schedule_code ~ '^daily-outcome-[0-9a-f]{32}$'
+      AND run.fire_key ~ '^daily-outcome:[0-9a-f-]{36}$'
+      AND run.state = 'SUCCEEDED'
+"""
+
+
+def _research_disposition_counts(connection: Any) -> tuple[int, int]:
+    # The command-kind prefix uses the existing receipt index once. A correlated
+    # LIKE previously scanned every receipt twice for each completed Outcome Run.
+    row = connection.execute(_RESEARCH_DISPOSITION_SQL).fetchone()
+    if row is None or row[2]:
+        raise ArtifactIntegrityError("daily research disposition receipt has an invalid Artifact result")
+    return int(row[0]), int(row[1])
+
+
+def _model_use_record(record: ExperimentalModelUseRecord) -> dict[str, Any]:
+    plan = record.plan
+    return {
+        "experimental_model_use_id": plan.experimental_model_use_id,
+        "model_version_id": plan.model_version_id,
+        "target_metric_definition_id": plan.target_metric_definition_id,
+        "baseline_strategy_version_id": plan.baseline_strategy_version_id,
+        "feature_roster_sha256": plan.feature_roster_sha256,
+        "protocol_artifact_id": plan.protocol_artifact.artifact_id,
+        "protocol_content_sha256": str(plan.protocol_artifact.content_sha256),
+        "protocol_size_bytes": plan.protocol_artifact.size_bytes,
+        "purpose": plan.purpose, "content_sha256": plan.content_sha256,
+        "valid_from": plan.valid_from, "expires_at": plan.expires_at,
+        "registered_at": record.registered_at, "revoked_at": record.revoked_at,
+    }
+
+
+def _model_use_health(record: ExperimentalModelUseRecord, observed_at: datetime) -> dict[str, Any]:
+    state = ("REVOKED" if record.revoked_at is not None else "EXPIRED" if observed_at >= record.plan.expires_at
+             else "NOT_YET_EFFECTIVE" if observed_at < record.plan.valid_from else "AVAILABLE")
+    return {**_model_use_record(record), "state": state,
+        "available_for_new_prediction": state == "AVAILABLE",
+        "expires_in_seconds": int((record.plan.expires_at - observed_at).total_seconds())}
+
+
 class PostgresDailyPredictionReads:
     def __init__(self, pool: TargetPostgresPool, byte_store: ResearchArtifactByteStore) -> None:
         self._pool = pool
         self._byte_store = byte_store
         self._inputs = PostgresDailyFeatureInputReadPort(pool, byte_store)
+
+    def experimental_model_use_record(self, identity: UUID) -> dict[str, Any]:
+        """Reload immutable Model-use fields and hash through their canonical owner."""
+        with self._pool.connection(read_only=True) as connection:
+            return _model_use_record(PostgresResearchModelRepository(connection).experimental_use(identity, lock=False))
 
     def published_report(self, plan: DailyPredictionPlan, key: str, expected: bytes) -> ArtifactBinding:
         with self._pool.connection(read_only=True) as connection:
@@ -174,11 +237,15 @@ class PostgresDailyPredictionReads:
         return {**now, 'runs': runs,'steps': steps,'attempts': attempts,'sessions': sessions,
                 'freshness': freshness,'artifact_verification': artifact}
 
-    def operational_health(self, plan: DailyPredictionPlan) -> dict[str, Any]:
+    def operational_health(self, plan: DailyPredictionPlan, *, template: DailyPredictionPlan | None = None) -> dict[str, Any]:
         """Bounded facts for publication, backlog, calendar, model, and freshness."""
 
         work = self.outcome_work_items(limit=256)
         target_ids: dict[UUID, UUID] = {}
+        template = template or plan
+        use_work: dict[UUID, list[dict[str, Any]]] = {
+            template.experimental_model_use_id: [], plan.experimental_model_use_id: [],
+        }
         plan_decode_failures = 0
         for item in work:
             if item.plan_content is None:
@@ -187,6 +254,8 @@ class PostgresDailyPredictionReads:
             try:
                 root = json.loads(item.plan_content)
                 target_ids[item.run_id] = UUID(root["plan"]["target_session_id"])
+                use_id = UUID(root["plan"]["experimental_model_use_id"])
+                use_work.setdefault(use_id, []).append({"run_id": item.run_id, "run_state": item.run_state})
             except (KeyError, TypeError, ValueError, json.JSONDecodeError):
                 plan_decode_failures += 1
         with self._pool.connection(read_only=True) as connection:
@@ -196,6 +265,15 @@ class PostgresDailyPredictionReads:
             use = PostgresResearchModelRepository(connection).experimental_use(
                 plan.experimental_model_use_id, lock=False
             )
+            model_uses = []
+            for identity in sorted(use_work, key=str):
+                record = use if identity == plan.experimental_model_use_id else (
+                    PostgresResearchModelRepository(connection).experimental_use(identity, lock=False)
+                )
+                model_uses.append({**_model_use_health(record, observed_at),
+                    "current_template": identity == template.experimental_model_use_id,
+                    "selected_for_current_window": identity == plan.experimental_model_use_id,
+                    "frozen_outcome_work": use_work[identity]})
             publication = connection.execute(
                 """
                 SELECT max(forecast.recorded_at)
@@ -308,34 +386,7 @@ class PostgresDailyPredictionReads:
                   AND run.runtime_mode = 'SHADOW'
                 """
             ).fetchone()
-            review = connection.execute(
-                """
-                SELECT
-                  count(*) FILTER (WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM mra.command_receipt AS receipt
-                    WHERE receipt.command_kind = 'REGISTER_ARTIFACT'
-                      AND receipt.status = 'SUCCEEDED'
-                      AND receipt.idempotency_key LIKE
-                          'daily:' || split_part(run.fire_key, ':', 2)
-                          || ':research-disposition:%'
-                  )),
-                  count(*) FILTER (WHERE EXISTS (
-                    SELECT 1
-                    FROM mra.command_receipt AS receipt
-                    WHERE receipt.command_kind = 'REGISTER_ARTIFACT'
-                      AND receipt.status = 'SUCCEEDED'
-                      AND receipt.idempotency_key LIKE
-                          'daily:' || split_part(run.fire_key, ':', 2)
-                          || ':research-disposition:%'
-                  ))
-                FROM mra.runtime_run AS run
-                JOIN mra.runtime_schedule AS schedule USING (schedule_id)
-                WHERE schedule.schedule_code ~ '^daily-outcome-[0-9a-f]{32}$'
-                  AND run.fire_key ~ '^daily-outcome:[0-9a-f-]{36}$'
-                  AND run.state = 'SUCCEEDED'
-                """
-            ).fetchone()
+            review = _research_disposition_counts(connection)
             session_rows = connection.execute(
                 "SELECT session_id, close_at FROM mra.trading_session WHERE session_id=ANY(%s::uuid[])",
                 (list(target_ids.values()),),
@@ -402,6 +453,10 @@ class PostgresDailyPredictionReads:
                     else "AVAILABLE"
                 ),
             },
+            "model_uses": model_uses,
+            "selected_plan": {"prediction_id": plan.prediction_id,
+                "experimental_model_use_id": plan.experimental_model_use_id,
+                "input_session_id": plan.input_session_id, "target_session_id": plan.target_session_id},
             "data_freshness": {
                 "last_capture_recorded_at": freshness[0],
                 "last_bar_recorded_at": freshness[1],
@@ -549,6 +604,54 @@ class PostgresDailyPredictionReads:
             ).fetchone()
         return None if row is None else self._byte_store.read_bytes(row[0], expected_size=row[1])
 
+    def session_work_items(self, plan: DailyPredictionPlan, input_session_id: UUID,
+                           target_session_id: UUID) -> tuple[DailySessionWorkItem, ...]:
+        """Find frozen work across Model uses through existing Model and Run indexes.
+
+        A changed Use must not replace a failed, waiting or published request.
+        No state/population filter or recent-history limit can hide those Runs.
+        """
+        with self._pool.connection(read_only=True) as connection:
+            uses = {row[0] for row in connection.execute(
+                "SELECT experimental_model_use_id FROM mra.experimental_model_use WHERE model_version_id=%s",
+                (plan.model_version_id,),
+            ).fetchall()} | {plan.experimental_model_use_id}
+            expected = {}
+            for use_id in uses:
+                prediction_id = uuid5(use_id, "daily:" + str(input_session_id) + ":" + str(target_session_id))
+                for phase in ("prediction", "abstention"):
+                    expected[uuid5(prediction_id, phase + "-runtime")] = (use_id, prediction_id, phase)
+            rows = connection.execute("""
+                SELECT run.run_id,run.schedule_id,schedule.schedule_code,run.fire_key,run.code_sha,run.config_hash,
+                       artifact.content_sha256,artifact.size_bytes,run.runtime_mode,schedule.runtime_mode
+                FROM mra.runtime_run run LEFT JOIN mra.runtime_schedule schedule USING(schedule_id)
+                LEFT JOIN mra.artifact artifact ON artifact.artifact_id=run.config_artifact_id
+                    AND artifact.integrity_state='AVAILABLE'
+                WHERE run.run_id=ANY(%s::uuid[]) ORDER BY run.run_id
+            """, (list(expected),)).fetchall()
+            if not rows:
+                # Acquisition freezes population/input before Prediction Runtime exists.
+                # A Use rollover cannot create a replacement for that frozen request.
+                old_collections = [uuid5(uuid5(use_id, "daily:" + str(input_session_id) + ":" + str(target_session_id)),
+                    phase + "-collection:" + str(ordinal))
+                    for use_id in uses if use_id != plan.experimental_model_use_id
+                    for phase in ("population", "input") for ordinal in range(1, 17)]
+                if old_collections and connection.execute(
+                    "SELECT run_id FROM mra.runtime_run WHERE run_id=ANY(%s::uuid[]) LIMIT 1",
+                    (old_collections,),
+                ).fetchone() is not None:
+                    raise ArtifactIntegrityError("DAILY_MODEL_USE_HANDOFF_HAS_FROZEN_COLLECTION")
+        result = []
+        for row in rows:
+            if row[6] is None or row[7] is None or row[5] != row[6] or row[8:] != ("SHADOW", "SHADOW"):
+                raise ArtifactIntegrityError("DAILY_SESSION_FROZEN_RUNTIME_UNAVAILABLE")
+            content = self._byte_store.read_bytes(row[6], expected_size=row[7])
+            use_id, prediction_id, phase = expected[row[0]]
+            result.append(DailySessionWorkItem(use_id, prediction_id, phase,
+                run_id=row[0], schedule_id=row[1], schedule_code=row[2], fire_key=row[3],
+                code_sha=row[4], config_sha256=row[5], plan_content=content))
+        return tuple(result)
+
     def outcome_work_items(
         self, *, limit: int = 64
     ) -> tuple[DailyOutcomeWorkItem, ...]:
@@ -654,6 +757,10 @@ class PostgresDailyPredictionReads:
 
         missing: list[tuple[UUID, UUID]] = []
         with self._pool.connection(read_only=True) as connection:
+            use_ids = {row[0] for row in connection.execute(
+                "SELECT experimental_model_use_id FROM mra.experimental_model_use WHERE model_version_id=%s",
+                (plan.model_version_id,),
+            ).fetchall()} | {plan.experimental_model_use_id}
             cursor = connection.cursor()
             cursor.execute(
                 """WITH calendar AS (
@@ -676,16 +783,12 @@ class PostgresDailyPredictionReads:
                 rows = cursor.fetchmany(128)
                 if not rows:
                     break
-                identities = {
-                    (row[0], row[1]): uuid5(
-                        plan.experimental_model_use_id,
-                        "daily:" + str(row[0]) + ":" + str(row[1]),
-                    )
-                    for row in rows
-                }
+                identities = {(row[0], row[1]): tuple(
+                    uuid5(use_id, "daily:" + str(row[0]) + ":" + str(row[1])) for use_id in use_ids
+                ) for row in rows}
                 run_ids = [
                     uuid5(identity, suffix)
-                    for identity in identities.values()
+                    for roster in identities.values() for identity in roster
                     for suffix in ("prediction-runtime", "abstention-runtime")
                 ]
                 existing = {
@@ -695,9 +798,10 @@ class PostgresDailyPredictionReads:
                         (run_ids,),
                     ).fetchall()
                 }
-                for pair, identity in identities.items():
+                for pair, roster in identities.items():
                     if not any(
                         uuid5(identity, suffix) in existing
+                        for identity in roster
                         for suffix in ("prediction-runtime", "abstention-runtime")
                     ):
                         missing.append(pair)
