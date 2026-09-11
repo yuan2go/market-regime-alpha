@@ -12,9 +12,10 @@ from market_regime_alpha.shared.time import require_utc
 from market_regime_alpha.research_qualification.domain.daily_inputs import DailyInputState
 
 
-def daily_health(app: Any, *, cutover_at: datetime | None = None, recent_sessions: int = 5, replay: bool = False) -> dict[str, Any]:
+def daily_health(app: Any, *, cutover_at: datetime | None = None, recent_sessions: int = 5, replay: bool = False,
+                 complete_history: bool = False) -> dict[str, Any]:
     reads = app.daily_prediction_reads
-    facts = reads.operational_ledger_rows()
+    facts = reads.operational_ledger_rows(complete_history=complete_history)
     now = facts["observed_at"]
     if type(recent_sessions) is not int or not 1 <= recent_sessions <= 120:
         raise ValueError("recent_sessions must be between 1 and 120")

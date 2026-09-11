@@ -42,6 +42,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 market_regime_alpha = [
+    "research_qualification/protocols/validity_v*.json",
     "infrastructure/postgres/migrations/*.sql",
     "infrastructure/postgres/operational_upgrades/wp18q_track_a_c_v2.sql",
     "infrastructure/postgres/seeds/*.sql",

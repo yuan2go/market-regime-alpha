@@ -59,3 +59,10 @@ canonical Evaluation and zero-write replay. They separately record the true
 19:00 backup failure, bounded service repair, manual backup continuity and next
 session's publication. This supersedes no historical bytes and grants no Alpha,
 Provider/PIT or Production qualification. Three-day proof remains time-blocked.
+
+The [Research Validity baseline](Research-Validity-Baseline-2026-09-11.md) and its
+[source/observation index](Research-Validity-Baseline-2026-09-11.json) freeze the
+future protocol and verify canonical multi-session read/metric/report boundaries.
+They retain the single descriptive session, insufficient real sample/history,
+Formal PIT/economic blockers and separate actual service failures/recovery.
+Infrastructure completion grants no Alpha or model-iteration authority.

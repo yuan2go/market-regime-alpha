@@ -77,6 +77,11 @@ same guarded service tick
   → complete DataReady → Dataset/Candidate/Decision → independent model Forecast
   → immutable publication and pending Outcome Run
   → later frozen-plan recovery → canonical Outcome → Evaluation/report
+
+mra research validity daily
+  → immutable versioned source protocol → canonical daily observations
+  → exact roster/source/replay reconciliation → temporal exclusions
+  → Evaluation-owned Decimal interpretation → read-only multi-session report
 ```
 
 Generic Backtest uses `exploratory_backtest_run` as its root;
@@ -92,6 +97,12 @@ Model is optional. Candidate does not require a Target, Model or Outcome.
 Daily publication has its own experimental Model-use contract and does not
 invent a retrospective fold. Settling old publications reads each original plan,
 not today's Model-use/template. No service layer owns business time.
+
+Research Validity adds no Runtime, table or label owner. Its source-pinned
+protocol binds the exact Model/use/Feature/Target and population semantics.
+Revisions apply to later cohorts; old Evaluation metrics remain unchanged.
+Derived historical statistics are post-hoc, and insufficient real session counts
+cannot qualify a model. The existing service continues natural accumulation.
 
 ## Boundaries that remain enforced
 

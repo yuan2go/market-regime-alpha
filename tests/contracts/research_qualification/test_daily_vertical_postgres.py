@@ -778,6 +778,26 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
         assert {row["commitment_id"] for row in observed["labels"]} == expected_commitments
         assert observed["publication"]["denominators"]["sampled"] == len(plan.instrument_ids)
         assert observed["evaluation"] == app.daily_prediction_reads.evaluation_projection(evaluation_id)
+        assert observed["frozen_plan_content"].encode() == encode_daily_plan(plan)
+        assert observed["frozen_identities"]["model"]["model_version_id"] == plan.model_version_id
+        assert observed["frozen_identities"]["experimental_model_use"]["experimental_model_use_id"] == plan.experimental_model_use_id
+        assert observed["frozen_identities"]["dataset"]["dataset_id"] == plan.dataset_id
+        assert {member["commitment_id"] for member in observed["commitments"]} == expected_commitments
+        assert {member["commitment_id"] for member in observed["temporal_facts"]["outcome_observations"]} == expected_commitments
+        assert all(member["source_role"] == "OUTCOME_OBSERVATION" for member in observed["temporal_facts"]["outcome_observations"])
+        assert all(member["checkpoint_role"] == "OUTCOME_OBSERVATION" for member in observed["temporal_facts"]["outcome_observations"])
+        assert all(member["capture_requested_at"] is not None for member in observed["temporal_facts"]["outcome_observations"])
+        assert observed["temporal_facts"]["target_start"] == target_session.open_at
+        assert observed["temporal_facts"]["target_end"] == target_session.close_at
+        filtered = daily_observations(app, target_session_from=target_session.session_date,
+            target_session_to=target_session.session_date, dataset_id=plan.dataset_id,
+            experimental_model_use_id=plan.experimental_model_use_id,
+            decision_run_id=observed["decision_run_id"], completed_only=True)
+        assert [cycle["prediction_id"] for cycle in filtered["cycles"]] == [plan.prediction_id]
+        assert filtered["unavailable"] == []
+        calendar = app.daily_prediction_reads.validity_calendar()
+        assert target_session.session_id.value in {row["session_id"] for row in calendar}
+        assert [row["session_date"] for row in calendar] == sorted({row["session_date"] for row in calendar})
         assert observation["business_writes"] == 0
         assert not daily_observations(app, model_version_id=uuid4())["cycles"]
         with monkeypatch.context() as patch:

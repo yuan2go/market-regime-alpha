@@ -43,6 +43,22 @@ retain complete membership/reasons. Candidate ranking is strict complete case.
 Partition and Evaluation freeze the complete parent roster before slicing;
 unselected broken members cannot disappear from a full-path calculation.
 
+Research Validity reads only the OutcomeRevision acquired by the original
+Evaluation, including Capture/normalization clocks and physical hashes. Published
+commitments, Partition members, acquisition and Decision commitment rosters must
+match. Model/baseline interpretation uses their exact common estimable population;
+all sampled and excluded members remain visible. Temporally invalid observations
+are excluded with reasons, never relabeled. Calendar and lineage reads retain the
+complete cohort, independently of bounded operational health inspection.
+
+Versioned files in `research_qualification/protocols` are immutable source
+resources with pinned SHA-256 and database-clock declaration evidence. They are
+not registered PostgreSQL Artifacts, persisted Evaluations or qualification.
+The existing exclusive service writer reservation stays intact. Evaluation-owned
+validity formulas derive read-only interpretation from canonical labels; the
+original frozen Evaluation metric rows and report bytes remain authoritative for
+their original protocol. Sep-10 new statistics are `POST_HOC_DESCRIPTIVE`.
+
 ## Financial and model identity
 
 `research_qualification/domain/episode_economics.py` implements independently
