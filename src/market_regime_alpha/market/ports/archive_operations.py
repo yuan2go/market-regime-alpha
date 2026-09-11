@@ -7,7 +7,8 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus
+from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus, ProviderCapture
+from market_regime_alpha.runtime.ports import ArtifactRecord
 from market_regime_alpha.shared.time import require_utc
 
 
@@ -46,6 +47,23 @@ class ArchiveCaptureDisposition:
     source_gap_ids: tuple[UUID, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class ArchiveTerminalNormalizerFailure:
+    """Owner-reloaded facts; the caller must verify frozen intent and bytes."""
+
+    capture: ProviderCapture
+    artifact: ArtifactRecord
+    capture_result_hash: str
+    normalization_request_hash: str
+
+
+class ArchiveTerminalCaptureReconciliationReadPort(Protocol):
+    def terminal_normalizer_failure(
+        self, *, run_id: UUID, step_id: UUID, market_archive_id: UUID,
+        market_archive_slice_id: UUID, fence_token: int,
+    ) -> ArchiveTerminalNormalizerFailure | None: ...
+
+
 class ArchiveOperationsReadPort(Protocol):
     def load_slice_contract(
         self,
@@ -65,4 +83,6 @@ __all__ = [
     "ArchiveOperationsReadPort",
     "ArchiveResourceInspector",
     "ArchiveSliceOperatingContract",
+    "ArchiveTerminalCaptureReconciliationReadPort",
+    "ArchiveTerminalNormalizerFailure",
 ]

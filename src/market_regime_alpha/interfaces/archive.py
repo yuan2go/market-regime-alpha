@@ -21,8 +21,8 @@ from market_regime_alpha.infrastructure.providers.baostock_archive import (
 )
 from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import (
     BaoStockArchiveNormalizer,
-    BaoStockProspectiveNormalizer,
 )
+from market_regime_alpha.infrastructure.providers.baostock_acquisition_readiness import BaoStockProspectiveAcquisitionNormalizer
 from market_regime_alpha.market.application import (
     ArchiveManifestSlice,
     ArchiveOperatorManifest,
@@ -153,6 +153,10 @@ def resume_archive(
 
 
 def archive_report(application: TargetApplication, archive_id: UUID, kind: str) -> object:
+    if kind == "acquisition-readiness":
+        return {"market_archive_id": archive_id,
+                "raw_acquisition_readiness": application.archive_acquisition_readiness.project(archive_id),
+                "business_writes": 0}
     report = application.archive_inspection.inspect(archive_id)
     if kind == "inspect" or kind == "daily-health":
         return report
@@ -239,7 +243,7 @@ def run_due_prospective_runtime(
         provider = BaoStockArchiveProvider(session)
 
         def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
-            return BaoStockProspectiveNormalizer(
+            return BaoStockProspectiveAcquisitionNormalizer(
                 expected_query=BaoStockArchiveQuery.from_resource(
                     item.capture_request.resource
                 ),
@@ -274,7 +278,7 @@ def continue_prospective_series(
                         maximum_rows=provider_maximum_rows,
                         maximum_response_bytes=provider_maximum_response_bytes) as session:
         def normalizer_for(item: ArchiveManifestSlice) -> BaoStockArchiveNormalizer:
-            return BaoStockProspectiveNormalizer(
+            return BaoStockProspectiveAcquisitionNormalizer(
                 expected_query=BaoStockArchiveQuery.from_resource(item.capture_request.resource),
                 revision_lineage=application.market_revision_lineage,
                 trading_sessions=application.archive_trading_sessions,

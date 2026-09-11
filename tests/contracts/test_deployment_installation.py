@@ -90,7 +90,7 @@ def test_cli_handoff_preserves_old_plan_but_cannot_create_old_code_work(tmp_path
         return {"state": "OWNER_CALLED", "prediction_id": p.prediction_id}
     monkeypatch.setattr(daily.DailyResearchOperations, "execute", execute)
     monkeypatch.setattr(daily.DailyResearchOperations, "settle_and_evaluate", execute)
-    args = SimpleNamespace(daily_command=command, plan=path, operation_config=path, maximum_steps=1)
+    args = SimpleNamespace(research_command="daily", daily_command=command, plan=path, operation_config=path, maximum_steps=1)
     if accepted:
         assert daily.dispatch_daily(args, None)["prediction_id"] == frozen.prediction_id
         assert observed == [frozen, frozen]

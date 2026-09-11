@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -15,15 +16,17 @@ from market_regime_alpha.market.domain import ArchiveLane, CaptureStatus
 from market_regime_alpha.market.ports import (
     CaptureRequest,
     MarketDatabaseClock,
+    MarketArtifactByteStore,
     MarketNormalizer,
     MarketProvider,
 )
+from market_regime_alpha.market.ports.acquisition_readiness import ArchiveAcquisitionReadiness, ArchiveAcquisitionReadinessClassifier
 from market_regime_alpha.market.ports.archive_operations import (
     ArchiveOperationsReadPort,
     ArchiveResourceInspector,
 )
 from market_regime_alpha.runtime.application import CommandContext
-from market_regime_alpha.runtime.errors import RuntimeStateConflictError
+from market_regime_alpha.runtime.errors import ArtifactIntegrityError, RuntimeStateConflictError
 from market_regime_alpha.runtime.ports import AttemptClaim
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 
@@ -53,6 +56,7 @@ class _MarketCommands(Protocol):
 class ArchiveSliceExecutionStatus(StrEnum):
     NOT_DUE = "NOT_DUE"
     CAPTURED = "CAPTURED"
+    NO_MATURE_INTERVAL = "NO_MATURE_INTERVAL"
     GAP_RECORDED = "GAP_RECORDED"
     RESOURCE_LIMIT = "RESOURCE_LIMIT"
     ALREADY_TERMINAL = "ALREADY_TERMINAL"
@@ -73,6 +77,7 @@ class ArchiveSliceExecutionResult:
     status: ArchiveSliceExecutionStatus
     capture_id: UUID | None
     source_gap_id: UUID | None
+    acquisition_readiness: ArchiveAcquisitionReadiness | None = None
 
 
 class MarketArchiveOperations:
@@ -83,12 +88,15 @@ class MarketArchiveOperations:
         read_port: ArchiveOperationsReadPort,
         resources: ArchiveResourceInspector,
         database_clock: MarketDatabaseClock,
+        *,
+        byte_store: MarketArtifactByteStore | None = None,
     ) -> None:
         self._market = market
         self._archives = archives
         self._read_port = read_port
         self._resources = resources
         self._database_clock = database_clock
+        self._byte_store = byte_store
 
     def execute_slice(
         self,
@@ -180,6 +188,27 @@ class MarketArchiveOperations:
                 capture_id=capture_id,
                 source_gap_id=gap_id,
             )
+        if contract.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS and isinstance(normalizer, ArchiveAcquisitionReadinessClassifier):
+            if self._byte_store is None or captured.artifact is None or captured.artifact.artifact_id != captured.capture.artifact_id:
+                raise ArtifactIntegrityError("ACQUISITION_CAPTURE_ARTIFACT_UNAVAILABLE")
+            content = self._byte_store.read_bytes(captured.artifact.content_sha256, expected_size=captured.artifact.size_bytes)
+            if len(content) != captured.artifact.size_bytes or sha256(content).hexdigest() != str(captured.artifact.content_sha256):
+                raise ArtifactIntegrityError("ACQUISITION_CAPTURE_ARTIFACT_CHANGED")
+            readiness = normalizer.acquisition_readiness(captured.capture, content)
+            if readiness is not None:
+                if (readiness.state != "NO_MATURE_INTERVAL" or readiness.capture_id != capture_id
+                        or readiness.source_sha256 != sha256(content).hexdigest()
+                        or readiness.requested_at != captured.capture.temporal.capture_started_at
+                        or readiness.first_mature_at <= readiness.requested_at or readiness.expected_interval_count < 1):
+                    raise ArtifactIntegrityError("ACQUISITION_READINESS_CAPTURE_IDENTITY_CHANGED")
+                # Replay the exact successful Capture receipt to close its fence.
+                # This cannot invoke the Provider again or claim normalization.
+                completed = self._market.capture(request.capture_request, provider, _child_context(context, "capture"),
+                    runtime_claim=runtime_claim, complete_runtime_attempt=True)
+                if completed.capture != captured.capture or completed.result_hash != captured.result_hash or not completed.replayed:
+                    raise ArtifactIntegrityError("ACQUISITION_CAPTURE_COMPLETION_DIFFERS")
+                return ArchiveSliceExecutionResult(request.market_archive_id, request.market_archive_slice_id,
+                    ArchiveSliceExecutionStatus.NO_MATURE_INTERVAL, capture_id, None, readiness)
         self._market.normalize(
             capture_id,
             normalizer,

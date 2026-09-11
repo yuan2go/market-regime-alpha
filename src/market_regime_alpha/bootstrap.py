@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
 from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
+from market_regime_alpha.infrastructure.postgres.queries.calendar_continuity import PostgresCalendarContinuityReads
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
 from market_regime_alpha.infrastructure.postgres.prospective_operation_session import (
     prospective_series_admission,
@@ -101,6 +102,7 @@ from market_regime_alpha.infrastructure.postgres.research_uow import (
 from market_regime_alpha.infrastructure.postgres.target_uow import (
     PostgresTargetUnitOfWorkProvider,
 )
+from market_regime_alpha.infrastructure.postgres.queries.archive_acquisition_readiness import PostgresArchiveAcquisitionReadinessReads
 from market_regime_alpha.infrastructure.postgres.queries import (
     PostgresCandidateQueryProvider,
     PostgresArchiveOperationsReadPort,
@@ -340,6 +342,7 @@ class TargetSettings:
 @dataclass(slots=True)
 class TargetApplication:
     daily_prediction_reads: PostgresDailyPredictionReads
+    calendar_continuity_reads: PostgresCalendarContinuityReads
     evidence: EvidenceApplication
     operational_diagnostics: PostgresOperationalDiagnostics
     backtest_diagnostics: BacktestDiagnosticsApplication
@@ -350,6 +353,7 @@ class TargetApplication:
     archive_operations: MarketArchiveOperations
     prospective_archives: ProspectiveArchiveRuntimeApplication
     archive_inspection: ArchiveInspectionPort
+    archive_acquisition_readiness: PostgresArchiveAcquisitionReadinessReads
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
     archive_continuity: PostgresProspectiveContinuityReadPort
@@ -444,6 +448,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresArchiveOperationsReadPort(pool),
         FilesystemArchiveResourceInspector(settings.artifact_root),
         market_clock,
+        byte_store=byte_store,
     )
     selection_application = SelectionApplication(PostgresSelectionUnitOfWorkProvider(pool))
     research_definitions_application = ResearchQualificationApplication(
@@ -592,6 +597,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
     )
     return TargetApplication(
         daily_prediction_reads=PostgresDailyPredictionReads(pool, byte_store),
+        calendar_continuity_reads=PostgresCalendarContinuityReads(pool, byte_store),
         operational_diagnostics=PostgresOperationalDiagnostics(pool),
         backtest_diagnostics=BacktestDiagnosticsApplication(
             PostgresBacktestDiagnosticsSourcePort(pool), backtest_reports,
@@ -616,6 +622,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             operations=archive_operations,
             database_clock=market_clock,
             due_query=PostgresArchiveOperationsReadPort(pool).due_slice_ids,
+            terminal_capture_reconciliation=PostgresArchiveOperationsReadPort(pool),
             continuity=PostgresProspectiveContinuityReadPort(pool),
             trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
             target_schedules=PostgresTargetArchiveScheduleReadPort(pool),
@@ -625,6 +632,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             admission_scope=prospective_series_admission,
         ),
         archive_inspection=PostgresArchiveInspectionPort(pool),
+        archive_acquisition_readiness=PostgresArchiveAcquisitionReadinessReads(pool, byte_store),
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),
         archive_continuity=PostgresProspectiveContinuityReadPort(pool),

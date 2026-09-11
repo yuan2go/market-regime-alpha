@@ -67,7 +67,7 @@ def test_missed_multi_member_run_reconciles_without_reopening_ready_steps(
     assert facts() == before
 
 
-@pytest.mark.parametrize("reason", ["NORMALIZATION_BINDING_REJECTED", "EXTERNAL_EFFECT_UNKNOWN"])
+@pytest.mark.parametrize("reason", ["NORMALIZATION_BINDING_REJECTED", "EXTERNAL_EFFECT_UNKNOWN", "NORMALIZER_OUTPUT_REJECTED"])
 def test_known_terminal_capture_failure_preserves_history_but_unknown_effect_refuses(prospective_stack, target_database_url, reason):
     from market_regime_alpha.market.application.prospective_runtime import ProspectiveRuntimeIntegrityError
     runtime, artifacts, pool = prospective_stack
@@ -91,7 +91,7 @@ def test_known_terminal_capture_failure_preserves_history_but_unknown_effect_ref
             return {table: connection.execute(f"SELECT to_jsonb(r) FROM mra.{table} r ORDER BY to_jsonb(r)::text").fetchall()
                 for table in ("runtime_run", "runtime_step", "runtime_attempt", "command_receipt", "audit_event")}
     before = facts()
-    if reason == "EXTERNAL_EFFECT_UNKNOWN":
+    if reason in {"EXTERNAL_EFFECT_UNKNOWN", "NORMALIZER_OUTPUT_REJECTED"}:
         with pytest.raises(ProspectiveRuntimeIntegrityError, match="FAILED"):
             application.predeclare(manifest, **arguments)
     else:

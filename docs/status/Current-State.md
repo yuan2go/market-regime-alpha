@@ -7,7 +7,68 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
-## Research Validity baseline
+## Operational reliability and cohort capacity
+
+The current correction keeps the 120-second tick budget, canonical Runtime,
+restricted principal and financial semantics. Installed identity is verified at
+startup and monitored before actions; receipt health reads use the existing
+command-kind index. Stage timing distinguishes framework work from Provider I/O.
+Backup/restart remains bounded and refuses unresolved Attempts or unknown effects.
+
+Actual Provider calendar Capture `da74567d-49ff-4e45-91bd-4c7291c50d50`
+was acquired on Sep-11 and normalized through the Market owner. Its complete
+Sep-11 through Dec-31 response establishes known calendar capacity. Protocol v2's
+old ModelUse expires on Oct-08 before the session opens: only 12 eligible real
+sessions and at most 384 observations remain available against its 20/500 floors.
+This is a lifecycle failure, not a request to wait for more observations.
+
+The read-only feasibility projection and successor/cohort guards preserve v1/v2
+bytes. A long-lived successor Use and v3 require actual owner registration and a
+new database-clock declaration. The original database's authentication boundary
+currently prevents that registration; no runtime privilege is expanded and no
+v3 is declared from a fixture or an unregistered identity.
+
+The observed pre-open empty-response failure has a narrow positive-evidence
+reconciliation. The original terminal Run remains failed. Future successful
+empty Captures before any interval matures use a separate readiness contract;
+they do not fabricate normalization, SourceGap or labels. Mature empty responses
+retain the original normalizer's SourceGap semantics.
+
+At **2026-09-11 11:04:48.216573+08:00**, frozen implementation
+`d2c794f152e2f2670a78d9f295f42a1baad8a42b` is installed and running in the
+original scope. Thirty-seven completed new-install ticks took 23.394–48.006 seconds
+(median 29.090, nearest-rank p95 40.909), with no QueryCanceled or resource stop.
+One additional partial tick ended during the controlled profile drain.
+The previous installation's 64-tick scope retains two resource stops and one
+QueryCanceled. This is no claim of long-term stability or a paired benchmark.
+
+The installed manual backup/restart completed all phases and verified actual
+subsequent tick bytes against the renewed profile, backup receipt and owned
+process. Prior 19:00/03:00 scheduled failures remain failed; no new scheduled fire
+occurred during this observation. The original completed Evaluation/report/replay
+projection is unchanged, and Sep-11's original Prediction is pending maturity.
+No unresolved Attempt, unknown effect or overdue unterminalized work remains at
+the cutoff. All 752 MISSED windows, including the original 544, and one historical
+planning gap remain visible as ATTENTION_REQUIRED.
+
+The real 10:30 window exposed a second issue: its 16-attempt profile cap stopped
+half the 32-member roster despite 27 seconds remaining, then the next wakeup
+arrived after the frozen deadline. The original Run remains FAILED. A controlled
+same-wheel profile/receipt handoff now allows 32 prospective attempts/daily steps,
+with cadence, financial semantics and the 120-second guard unchanged. Its new
+backup, mirror, preflight and two actual ticks passed. Complete future one-minute
+window capacity remains unobserved; no terminal work was reopened.
+
+Performance and backup recovery contracts pass their bounded observations. The
+overall reliability/cohort exit gate is **NO** until owner maintenance is
+authorized, a real successor ModelUse is registered and immutable future v3 is
+declared. The reviewed maintenance remains unexecuted; HBA and runtime grants
+remain unchanged. One completed real session still leaves sustained proof
+BLOCKED_BY_ELAPSED_REAL_TIME and MODEL_VALUE NOT_ESTIMABLE / ALPHA_PROVEN NO.
+See the [immutable closure observation](../archive/Operational-Reliability-Cohort-Closure-2026-09-11.md)
+for exact source, deployment, performance, failures and validation receipts.
+
+## Previous Research Validity baseline cutoff
 
 The read-only baseline is implemented from main
 `c61a133995c015530a992a87421e750e64f4d5ef`. `mra research validity daily`

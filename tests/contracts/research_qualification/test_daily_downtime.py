@@ -28,6 +28,14 @@ from market_regime_alpha.research_qualification.ports.daily_prediction import (
 from tests.contracts.research_qualification.test_daily_prediction import plan
 
 
+@pytest.fixture(autouse=True)
+def _isolated_calendar_handoff(monkeypatch):
+    # This module tests downtime, not Provider I/O; calendar owner is exercised
+    # by test_calendar_continuity_postgres with real Runtime/Market receipts.
+    monkeypatch.setattr("market_regime_alpha.interfaces.daily_service.refresh_calendar", lambda *_, **__: {
+        "state": "NOT_DUE", "reason_code": "SYNTHETIC_TEST_CALENDAR", "coverage": {"state": "VERIFIED"}})
+
+
 def test_elapsed_unpublished_window_is_recorded_before_current_prediction(monkeypatch):
     from market_regime_alpha.interfaces import daily_service
 
@@ -84,12 +92,14 @@ def test_calendar_exhaustion_is_a_typed_non_prediction_state():
     assert result["delivery"]["state"] == "NOT_CONFIGURED"
 
 
-def test_elapsed_scan_bounds_outstanding_gaps_not_complete_model_use_lifetime():
+@pytest.mark.parametrize("other_model_use", [False, True])
+def test_elapsed_scan_bounds_outstanding_gaps_not_complete_model_use_lifetime(other_model_use):
     from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import (
         PostgresDailyPredictionReads,
     )
 
     template = plan()
+    represented_use = UUID(int=333) if other_model_use else template.experimental_model_use_id
     pairs = tuple(
         (UUID(int=1_000 + index), UUID(int=2_000 + index))
         for index in range(300)
@@ -97,7 +107,7 @@ def test_elapsed_scan_bounds_outstanding_gaps_not_complete_model_use_lifetime():
     represented = {
         uuid5(
             uuid5(
-                template.experimental_model_use_id,
+                represented_use,
                 "daily:" + str(input_id) + ":" + str(target_id),
             ),
             "prediction-runtime",
@@ -133,6 +143,8 @@ def test_elapsed_scan_bounds_outstanding_gaps_not_complete_model_use_lifetime():
             return cursor
 
         def execute(self, _query, parameters):
+            if "SELECT experimental_model_use_id" in _query:
+                return Result([(represented_use,)])
             requested = parameters[0]
             return Result([(run_id,) for run_id in requested if run_id in represented])
 
@@ -358,6 +370,9 @@ def test_real_daily_tick_records_downtime_once_through_runtime_handoff(
 
         def run_plan_content(self, run_id):
             return self._persisted.run_plan_content(run_id)
+
+        def session_work_items(self, *args):
+            return self._persisted.session_work_items(*args)
 
         def collection_rounds(self, prediction_id, phase):
             return self._persisted.collection_rounds(prediction_id, phase)

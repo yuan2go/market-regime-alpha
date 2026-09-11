@@ -624,7 +624,7 @@ def daily_research_admission(*, prediction_id: UUID, code_sha: str, config_sha25
     No lock is released; other Runtime workers remain excluded by atomic admission.
     This process capability is not a business registration or execution Authority.
     """
-    if collection_phase not in {None,'input','outcome','population'} or not 1<=collection_round<=16:
+    if collection_phase not in {None,'input','outcome','population','calendar'} or not 1<=collection_round<=16 or collection_phase == 'calendar' and collection_round != 1:
         raise ValueError('DAILY_OPERATION_SCOPE_INVALID')
     session=_operation_session.get()
     if session is None:

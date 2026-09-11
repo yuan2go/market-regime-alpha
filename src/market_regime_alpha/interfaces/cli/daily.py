@@ -53,6 +53,7 @@ def add_daily_parser(areas: Any) -> None:
     health.add_argument('--cutover-at', type=datetime.fromisoformat)
     health.add_argument('--recent-sessions', type=int, default=5)
     health.add_argument('--replay', action='store_true')
+    health.add_argument('--backup-receipts-directory', type=Path)
     observation = operations.add_parser("observations")
     observation.add_argument("--target-session-date", type=date.fromisoformat)
     observation.add_argument("--model-version-id", type=UUID)
@@ -76,11 +77,21 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
         protocol = load_validity_protocol(arguments.protocol_version)
         identities = protocol["identities"]
         with bootstrap_application(settings) as app:
-            observations = daily_observations(app, model_version_id=UUID(identities["model_version"]["id"]),
-                experimental_model_use_id=UUID(identities["experimental_model_use"]["id"]),
+            operational = daily_observations(app, model_version_id=UUID(identities["model_version"]["id"]),
                 target_definition_id=UUID(identities["target_definition"]["id"]))
+            use_id = UUID(identities["experimental_model_use"]["id"])
+            observations = {**operational, **{
+                key: [row for row in operational[key] if row["experimental_model_use_id"] == use_id]
+                for key in ("cycles", "unavailable")
+            }}
+            use = app.daily_prediction_reads.experimental_model_use_record(use_id)
+            witness = app.calendar_continuity_reads.calendar_coverage(
+                UUID(protocol["frozen_population_semantics"]["provider_product_id"]),
+                operational["observed_at"],
+            ) if "frozen_population_semantics" in protocol else None
             return validity_report(observations, protocol, app.daily_prediction_reads.validity_calendar(),
-                target_session_from=arguments.target_session_from, target_session_to=arguments.target_session_to)
+                target_session_from=arguments.target_session_from, target_session_to=arguments.target_session_to,
+                model_use=use, calendar_coverage_witness=witness, operational_observations=operational)
     command = arguments.daily_command
     if command == "observations":
         from market_regime_alpha.interfaces.daily_observations import daily_observations
@@ -96,10 +107,14 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
     if command == 'health':
         from market_regime_alpha.interfaces.daily_health import daily_health
         with bootstrap_application(settings) as app:
-            return {
+            health_result = {
                 'daily': daily_health(app,cutover_at=arguments.cutover_at,recent_sessions=arguments.recent_sessions,replay=arguments.replay),
                 'prospective': app.prospective_health.inspect(arguments.series_code,cutover_at=arguments.cutover_at,recent_sessions=arguments.recent_sessions),
             }
+            if arguments.backup_receipts_directory is not None:
+                from market_regime_alpha.interfaces.operational_reliability import scheduled_backup_reliability
+                health_result['scheduled_backup'] = scheduled_backup_reliability(arguments.backup_receipts_directory)
+            return health_result
     if command == "retry-population":
         import importlib
         from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan, PerCaptureBaoStockProvider, retry_failed_population_collection

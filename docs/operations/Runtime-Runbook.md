@@ -80,6 +80,94 @@ wheel and actual installation. Backup refresh may renew only the three backup
 identity fields after verification; scope, budgets and implementation changes
 require another verified deployment preparation.
 
+The service verifies complete installed package, wheel and receipt content at
+startup. Every owned Python bytecode cache must have a supported magic/header,
+cache tag and optimization level, an exact current source file, and a code object
+equivalent to compiling that verified source. Timestamp or source-hash headers
+alone do not prove bytecode integrity. External bytecode-cache lookup is rejected.
+The process disables bytecode writes before verification; later imports may read
+only verified caches or compile the verified source without creating a cache.
+Each action re-enumerates all owned source/resources and bytecode caches,
+distribution metadata, wheel and receipt and compares OS file identity, size,
+mode, owner, inode, mtime and ctime. A changed resource roster or identity rejects
+the action, including any new or changed cache or a changed bytecode policy; a new
+process must perform full verification again. This assumes the
+existing trusted OS/interpreter boundary and does not cache mutable business
+state, database permissions, leases or fences. Runtime login privileges and the
+database scope remain live checks. A backup-only profile renewal starts a fresh
+verified guard under the same supervisor reservation; it cannot reuse the old
+guard's pinned configuration.
+
+Preflight and tick JSON include `stage_timings`. `before_action_guard` is an
+inclusive child of owner work and must not be added to its parent's elapsed time.
+`PROSPECTIVE_STAGE_FAILURE` records the phase, elapsed time and exception type
+before the ordinary failure path exits. It neither retries nor masks the error.
+The tick hard stop remains 120 seconds. Operational observation targets are:
+
+| Work class | Observation target | Boundary |
+|---|---|---|
+| Cold startup/preflight | Explain package, ACL, Artifact and backup verification separately | Outside tick; full verification required |
+| Warm idle | p95 below 60 seconds; ordinary maximum below 90 | 120-second hard stop |
+| Prediction | Framework overhead separately from actual Provider, normalization and owner work | 120-second hard stop; frozen work continues through Runtime |
+| Outcome/Evaluation | Actual acquisition, normalization, settlement and report stages separately | 120-second hard stop; no terminal reopening |
+| Backup/restart | Record drain, snapshot, verify, mirror, preflight and subsequent tick duration | One owned restart; failure requires reconciliation |
+
+These targets are observations to verify, not timeout increases or claims of
+long-term stability. Missing workload measurements remain `NOT_OBSERVED`.
+
+Scheduled backup invokes the existing helper with `--scheduled`. Classification
+requires the current owned backup LaunchAgent PID and an actual observation within
+five minutes from 03:00 or 19:00 Asia/Shanghai. The evidence class is
+`OWNED_JOB_AND_SCHEDULE_WINDOW`: an operator kick inside that window cannot be
+distinguished from launchd's calendar fire by PID inspection. An out-of-window
+kick cannot become a scheduled receipt. Old receipts lacking this provenance stay
+unclassified; separate historical scheduled-fire evidence retains its meaning.
+
+A process crash, QueryCanceled or resource stop fails closed. There is no automatic
+process restart loop or Runtime retry. An explicit `--recover-stopped` invocation
+records the prior stopped-service fact, reloads current Attempts and fences, and
+requires owner reconciliation of every active, expired or unknown effect. It
+preserves terminal failures and makes at most one restart request after five
+seconds of backoff. This manual receipt cannot become a scheduled success.
+
+Restart proof requires the physical subsequent-tick and restart-observation files,
+their exact hashes, the refreshed profile and backup receipt identities, monotonic
+observation times, and matching owned PID, UID, start time and command hash across
+fresh process checks. The observed tick must remain within the unchanged
+120-second budget. Missing or changed proof cannot count as a completed scheduled
+backup. If proof fails, recovery drains only the process identity it actually
+observed. A disabled service is never revived.
+
+The existing health entry accepts the optional private receipt directory:
+
+```bash
+uv run mra research daily health --series-code "$MRA_SERIES_CODE" --replay --backup-receipts-directory "$MRA_BACKUP_RECEIPTS"
+```
+
+Its `SCHEDULED_BACKUP_RELIABILITY` retains every observed fire, failure reason,
+duration, restart verification and explicit denominator. Same-host redundancy
+does not provide offsite disaster recovery.
+
+Calendar continuity is a bounded child of the existing service. It uses actual
+Provider civil-date responses, immutable Capture bytes and Market normalization,
+and refreshes after seven days or when the known horizon is too short. Requests
+span at most 120 civil dates and are clipped to the current ModelUse expiry.
+Civil dates bound a request; only explicit Provider open flags create sessions.
+Missing response dates become typed SourceGap, never inferred holidays. Each
+request has one frozen two-step Runtime with a single permitted Provider effect;
+duplicate work replays, terminal work stays terminal, and unresolved work blocks
+replacement across date boundaries.
+
+Validity reports reload the exact protocol's ModelUse even when its cohort has
+no completed observations. Capacity distinguishes known calendar limits from
+ModelUse lifetime limits and shows both a possible upper bound and the frozen
+downtime/missingness buffer scenario. A capacity PASS is not a promise of future
+data. Old and new Use populations remain separate formal cohorts; operational
+day counts may span their reconciled sessions. Same-window old frozen work is
+preserved through rollover, and only an unrepresented new window uses the new
+authorization. Protocol bytes, research minima and financial semantics do not
+change in place.
+
 ```bash
 uv run mra archive prospective preflight --operation-config "$MRA_OPERATION_CONFIG"
 uv run mra archive prospective serve --help

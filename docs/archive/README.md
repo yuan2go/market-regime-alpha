@@ -66,3 +66,12 @@ future protocol and verify canonical multi-session read/metric/report boundaries
 They retain the single descriptive session, insufficient real sample/history,
 Formal PIT/economic blockers and separate actual service failures/recovery.
 Infrastructure completion grants no Alpha or model-iteration authority.
+
+The [operational reliability and cohort observation](Operational-Reliability-Cohort-Closure-2026-09-11.md)
+and its [machine-readable record](Operational-Reliability-Cohort-Closure-2026-09-11.json)
+bind the installed guard/query/calendar/recovery corrections, actual tick and
+manual backup evidence, immutable old lineage and v2's proven lifetime failure.
+The overall exit gate remains NO pending owner authorization, real successor
+ModelUse registration and future v3 declaration. Historical failures and prior
+protocol bytes are preserved; bounded engineering PASS is not sustained or Alpha
+evidence.

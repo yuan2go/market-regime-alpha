@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack, contextmanager
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -13,7 +14,7 @@ import os
 from pathlib import Path
 import sys
 from time import perf_counter
-from typing import Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 from uuid import UUID
 
 import psycopg
@@ -55,6 +56,38 @@ from market_regime_alpha.market.application import compile_prospective_runtime_p
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 
 
+@contextmanager
+def _operation_stage(timings: dict[str, dict[str, Any]], name: str, *, phase: str,
+                     emit: Callable[[object], None], tick_sequence: int | None = None,
+                     inclusive_child: bool = False) -> Iterator[None]:
+    """Measure an existing boundary; no retry, budget or business-time policy."""
+    started = perf_counter()
+    state, error_type = "PASS", None
+    try:
+        yield
+    except BaseException as exc:
+        state = "STOPPED" if isinstance(exc, OperationStopped) else "FAIL"
+        error_type = type(exc).__name__
+        raise
+    finally:
+        elapsed = perf_counter() - started
+        previous = timings.get(name, {})
+        timings[name] = {
+            "count": int(previous.get("count", 0)) + 1,
+            "elapsed_seconds": float(previous.get("elapsed_seconds", 0.0)) + elapsed,
+            "failed_count": int(previous.get("failed_count", 0)) + (state == "FAIL"),
+            "stopped_count": int(previous.get("stopped_count", 0)) + (state == "STOPPED"),
+            "last_state": state,
+            "inclusive_child": inclusive_child,
+            "add_to_other_stage_totals": not inclusive_child,
+        }
+        if state != "PASS":
+            emit({"event": "PROSPECTIVE_STAGE_FAILURE", "phase": phase, "stage": name,
+                  "tick_sequence": tick_sequence, "state": state, "error_type": error_type,
+                  "stage_elapsed_seconds": elapsed, "inclusive_child": inclusive_child,
+                  "stage_timings": timings})
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -78,87 +111,101 @@ def main(
         settings = TargetSettings.from_environ(runtime_environ)
         payload: object
         if operation_mode:
-            if arguments.operation_config is None:
-                raise ValueError("operation-config is required before prospective service startup")
-            operation_config = load_operation_config(arguments.operation_config)
-            require_installation(operation_config)
-            if arguments.prospective_command == "serve":
-                validate_operation_arguments(operation_config, arguments)
-            elif arguments.expected_database_name != operation_config.database_name:
-                raise ValueError("OPERATION_DATABASE_IDENTITY_MISMATCH")
-
             def emit(value: object) -> None:
                 output.write(json.dumps(_json_value(value), sort_keys=True) + "\n")
                 output.flush()
 
-            with operational_session(settings, operation_config) as guard:
+            startup_timings: dict[str, dict[str, Any]] = {}
+            if arguments.operation_config is None:
+                raise ValueError("operation-config is required before prospective service startup")
+            with _operation_stage(startup_timings, "installed_profile", phase="STARTUP", emit=emit):
+                operation_config = load_operation_config(arguments.operation_config)
+                require_installation(operation_config)
+                if arguments.prospective_command == "serve":
+                    validate_operation_arguments(operation_config, arguments)
+                elif arguments.expected_database_name != operation_config.database_name:
+                    raise ValueError("OPERATION_DATABASE_IDENTITY_MISMATCH")
+
+            with ExitStack() as supervisor_stack:
+                with _operation_stage(startup_timings, "supervisor_scope", phase="STARTUP", emit=emit):
+                    guard = supervisor_stack.enter_context(operational_session(settings, operation_config))
                 import baostock as sdk
-                with bootstrap_application(settings) as application:
+                with ExitStack() as startup_stack:
+                    with _operation_stage(startup_timings, "bootstrap_scope", phase="STARTUP", emit=emit):
+                        application = startup_stack.enter_context(bootstrap_application(settings))
                     daily_template=None
                     daily_delivery_adapter = None
                     daily_delivery_configuration: dict[str, object] = {
                         "state": "NOT_CONFIGURED",
                         "channels": (),
                     }
-                    if arguments.daily_plan_template is not None:
-                        from market_regime_alpha.interfaces.daily_service import prepare_pending_daily_recovery
-                        from market_regime_alpha.interfaces.daily_delivery import (
-                            LegacyNotifierDeliveryAdapter,
-                        )
-                        from market_regime_alpha.interfaces.daily_research import decode_daily_plan
-                        from market_regime_alpha.notifications import build_notifiers
-                        from hashlib import sha256
-                        daily_content=arguments.daily_plan_template.read_bytes()
-                        daily_template=decode_daily_plan(daily_content)
-                        if daily_template.code_sha!=operation_config.code_sha:
-                            raise ValueError('OPERATION_DAILY_CODE_IDENTITY_MISMATCH')
-                        application.daily_prediction_reads.validate_configuration(daily_template)
-                        guard.session.allow_expired_daily_recovery(daily_template.experimental_model_use_id, daily_template.code_sha)
-                        prepare_pending_daily_recovery(application, guard.session)
-                        notifiers, unavailable_channels = build_notifiers(
-                            env=dict(runtime_environ)
-                        )
-                        if len(notifiers) > 1:
-                            raise ValueError(
-                                "OPERATION_DAILY_MULTIPLE_DELIVERY_CHANNELS_UNSUPPORTED"
+                    with _operation_stage(startup_timings, "daily_preparation", phase="STARTUP", emit=emit):
+                        if arguments.daily_plan_template is not None:
+                            from market_regime_alpha.interfaces.daily_service import prepare_pending_daily_recovery
+                            from market_regime_alpha.interfaces.daily_delivery import (
+                                LegacyNotifierDeliveryAdapter,
                             )
-                        if notifiers:
-                            daily_delivery_adapter = LegacyNotifierDeliveryAdapter(
-                                notifiers[0]
+                            from market_regime_alpha.interfaces.daily_research import decode_daily_plan
+                            from market_regime_alpha.notifications import build_notifiers
+                            from hashlib import sha256
+                            daily_content=arguments.daily_plan_template.read_bytes()
+                            daily_template=decode_daily_plan(daily_content)
+                            if daily_template.code_sha!=operation_config.code_sha:
+                                raise ValueError('OPERATION_DAILY_CODE_IDENTITY_MISMATCH')
+                            application.daily_prediction_reads.validate_configuration(daily_template)
+                            guard.session.allow_expired_daily_recovery(daily_template.experimental_model_use_id, daily_template.code_sha)
+                            prepare_pending_daily_recovery(application, guard.session)
+                            notifiers, unavailable_channels = build_notifiers(
+                                env=dict(runtime_environ)
                             )
-                            daily_delivery_configuration = {
-                                "state": "CONFIGURED",
-                                "channels": (notifiers[0].channel,),
-                            }
-                        elif unavailable_channels:
-                            daily_delivery_configuration = {
-                                "state": "NOT_CONFIGURED",
-                                "channels": tuple(
-                                    result.channel
-                                    for result in unavailable_channels
-                                ),
-                                "reason_codes": tuple(
-                                    "CHANNEL_UNAVAILABLE"
-                                    for _result in unavailable_channels
-                                ),
-                            }
-                    preflight = guard.verify_startup(application)
-                    preflight["provider_access"] = verify_provider_access(
-                        sdk, timeout_seconds=operation_config.provider_timeout_seconds,
-                    )
+                            if len(notifiers) > 1:
+                                raise ValueError(
+                                    "OPERATION_DAILY_MULTIPLE_DELIVERY_CHANNELS_UNSUPPORTED"
+                                )
+                            if notifiers:
+                                daily_delivery_adapter = LegacyNotifierDeliveryAdapter(
+                                    notifiers[0]
+                                )
+                                daily_delivery_configuration = {
+                                    "state": "CONFIGURED",
+                                    "channels": (notifiers[0].channel,),
+                                }
+                            elif unavailable_channels:
+                                daily_delivery_configuration = {
+                                    "state": "NOT_CONFIGURED",
+                                    "channels": tuple(
+                                        result.channel
+                                        for result in unavailable_channels
+                                    ),
+                                    "reason_codes": tuple(
+                                        "CHANNEL_UNAVAILABLE"
+                                        for _result in unavailable_channels
+                                    ),
+                                }
+                    with _operation_stage(startup_timings, "guard_preflight_principal_artifact_backup", phase="STARTUP", emit=emit):
+                        preflight = guard.verify_startup(application)
+                    with _operation_stage(startup_timings, "provider_login", phase="STARTUP", emit=emit):
+                        preflight["provider_access"] = verify_provider_access(
+                            sdk, timeout_seconds=operation_config.provider_timeout_seconds,
+                        )
                     if daily_template is not None:
                         preflight['daily_template_sha256']=sha256(daily_content).hexdigest()
                         preflight["daily_delivery"] = daily_delivery_configuration
-                    preflight["health"] = (
-                        application.prospective_health.inspect(operation_config.series_code)["summary"]
-                        if arguments.prospective_command == "preflight"
-                        else {"state": "OWNER_RECONCILIATION_PENDING"}
-                    )
+                    if arguments.prospective_command == "preflight":
+                        with _operation_stage(startup_timings, "prospective_health", phase="STARTUP", emit=emit):
+                            preflight["health"] = application.prospective_health.inspect(operation_config.series_code)["summary"]
+                    else:
+                        preflight["health"] = {"state": "OWNER_RECONCILIATION_PENDING"}
+                    preflight["stage_timings"] = startup_timings
                 alerts = OperationAlertChanges()
                 stop_request = OperationStopRequest()
+                tick_sequence = 0
 
                 def tick() -> object:
+                    nonlocal tick_sequence
+                    tick_sequence += 1
                     started = perf_counter()
+                    tick_timings: dict[str, dict[str, Any]] = {}
                     def check_stop() -> None:
                         if stop_request.requested:
                             raise OperationStopped("STOP_REQUESTED")
@@ -166,15 +213,21 @@ def main(
                             raise OperationStopped("TICK_BUDGET_EXCEEDED")
                     def before_action() -> None:
                         check_stop()
-                        guard.before_action()
+                        with _operation_stage(tick_timings, "before_action_guard", phase="TICK", emit=emit,
+                                              tick_sequence=tick_sequence, inclusive_child=True):
+                            guard.before_action()
                         check_stop()
-                    guard.snapshot()
+                    with _operation_stage(tick_timings, "installation_scope_checks", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                        guard.snapshot()
                     # Revalidate the new composition connection, not only the
                     # separate supervisor-lock connection, before owner writes.
-                    with bootstrap_application(settings) as application:
-                        guard.validate_scope(application.evidence.inventory())
+                    with ExitStack() as tick_stack:
+                        with _operation_stage(tick_timings, "bootstrap_scope", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                            application = tick_stack.enter_context(bootstrap_application(settings))
+                        with _operation_stage(tick_timings, "installation_scope_checks", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                            guard.validate_scope(application.evidence.inventory())
                         try:
-                            with quiet_provider_output():
+                            with _operation_stage(tick_timings, "prospective_continuation", phase="TICK", emit=emit, tick_sequence=tick_sequence), quiet_provider_output():
                                 result = continue_prospective_series(
                                     application, series_code=operation_config.series_code, sdk=sdk,
                                     code_sha=operation_config.code_sha, actor_id=operation_config.actor_id,
@@ -194,28 +247,33 @@ def main(
                             from market_regime_alpha.interfaces.daily_service import daily_tick
                             from market_regime_alpha.interfaces.daily_collection import PerCaptureBaoStockProvider
                             try:
-                                daily_result=daily_tick(application,daily_template,PerCaptureBaoStockProvider(sdk,
-                                    timeout_seconds=operation_config.provider_timeout_seconds,maximum_rows=operation_config.provider_maximum_rows,
-                                    maximum_response_bytes=operation_config.provider_maximum_response_bytes),worker_id=operation_config.worker_id,
-                                    maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action,
-                                    delivery_adapter=daily_delivery_adapter)
+                                with _operation_stage(tick_timings, "daily_research", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                                    daily_result=daily_tick(application,daily_template,PerCaptureBaoStockProvider(sdk,
+                                        timeout_seconds=operation_config.provider_timeout_seconds,maximum_rows=operation_config.provider_maximum_rows,
+                                        maximum_response_bytes=operation_config.provider_maximum_response_bytes),worker_id=operation_config.worker_id,
+                                        maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action,
+                                        delivery_adapter=daily_delivery_adapter)
                             except OperationStopped as exc:
                                 daily_result={'state':'OPERATOR_STOPPED','reason_code':exc.reason_code}
-                        health = application.prospective_health.inspect(operation_config.series_code,
-                            cutover_at=arguments.health_cutover_at)
+                        with _operation_stage(tick_timings, "prospective_health", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                            health = application.prospective_health.inspect(operation_config.series_code,
+                                cutover_at=arguments.health_cutover_at)
                         daily_scoped_health = None
                         if daily_template is not None:
                             from market_regime_alpha.interfaces.daily_health import daily_health
-                            daily_scoped_health = daily_health(application,cutover_at=arguments.health_cutover_at)
-                            daily_scoped_health['pending_work'] = [
-                                {key: row.get(key) for key in ('run_id','prediction_id','target_session','state','reason_code')}
-                                for row in daily_scoped_health.pop('ledger')
-                            ]
+                            with _operation_stage(tick_timings, "daily_health", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                                daily_scoped_health = daily_health(application,cutover_at=arguments.health_cutover_at)
+                                daily_scoped_health['pending_work'] = [
+                                    {key: row.get(key) for key in ('run_id','prediction_id','target_session','state','reason_code')}
+                                    for row in daily_scoped_health.pop('ledger')
+                                ]
                     summary = health["summary"]
                     alert_summary = (health['scopes']['POST_CURRENT_CUTOVER']['summary']
                                      if arguments.health_cutover_at is not None else summary)
                     return {
                         "event": "PROSPECTIVE_TICK", "database": health["database"],
+                        "tick_sequence": tick_sequence, "stage_timings": tick_timings,
+                        "stage_timing_contract": "WALL_CLOCK; BEFORE_ACTION_GUARD_IS_INCLUSIVE_CHILD_DO_NOT_SUM_WITH_PARENT_STAGES",
                         "series_code": operation_config.series_code, "observed_at": health["observed_at"],
                         "configuration_sha256": operation_config.content_sha256,
                         "continuation": result,
@@ -456,7 +514,9 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         code_sha=arguments.code_sha,
                         runtime_revision=arguments.runtime_revision,
                     )
-            if arguments.archive_command in {"inspect", "gap-report", "revision-report", "daily-health"}:
+            if arguments.archive_command in {
+                "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
+            }:
                 return archive_report(
                     application,
                     arguments.archive_id,
@@ -648,7 +708,9 @@ def _parser() -> argparse.ArgumentParser:
         if command in {"resume", "retry"}:
             mutation.add_argument("--operation-key", required=True)
             mutation.add_argument("--slice-id", action="append", type=UUID)
-    for command in ("inspect", "gap-report", "revision-report", "daily-health"):
+    for command in (
+        "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
+    ):
         inspection = archive_commands.add_parser(command)
         inspection.add_argument("--archive-id", required=True, type=UUID)
         inspection.add_argument("--expected-database-name", required=True)
