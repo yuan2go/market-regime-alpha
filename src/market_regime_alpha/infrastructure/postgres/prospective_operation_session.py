@@ -56,6 +56,7 @@ def canonical_writer_admission(connection: psycopg.Connection[Any]) -> Iterator[
     """
     session = _operation_session.get()
     locked = False
+    failure: BaseException | None = None
     try:
         if session is None:
             locked = connection.execute(
@@ -74,14 +75,23 @@ def canonical_writer_admission(connection: psycopg.Connection[Any]) -> Iterator[
                 raise ValueError("OPERATION_CANONICAL_WRITER_SCOPE_MISMATCH")
         connection.commit()
         yield
+    except BaseException as exc:
+        failure = exc
+        raise
     finally:
-        if locked and not connection.closed:
-            connection.rollback()
-            connection.execute(
-                "SELECT pg_advisory_unlock_shared(hashtextextended(%s,0))",
-                (_DATABASE_WRITER_KEY,),
-            )
-            connection.commit()
+        try:
+            if locked and not connection.closed:
+                connection.rollback()
+                connection.execute(
+                    "SELECT pg_advisory_unlock_shared(hashtextextended(%s,0))",
+                    (_DATABASE_WRITER_KEY,),
+                )
+                connection.commit()
+        except Exception as cleanup_error:
+            connection.close()
+            if failure is None:
+                raise
+            failure.add_note("Writer admission cleanup failed: " + type(cleanup_error).__name__)
 
 
 @contextmanager
@@ -174,6 +184,7 @@ class PostgresProspectiveOperationSession:
         self.daily_recovery_scope: tuple[UUID, str] | None = None
         self.frozen_daily_recovery: set[tuple[UUID, str, str]] = set()
         self.daily_delivery_scope: tuple[UUID, UUID, str, str, str] | None = None
+        self.frozen_delivery_recovery: set[tuple[UUID, UUID, str, str, str]] = set()
         self.prospective_scope: ProspectiveRuntimeAdmission | None = None
         self.prospective_recovery_scopes: tuple[ProspectiveRuntimeAdmission, ...] = ()
 
@@ -434,9 +445,23 @@ class PostgresProspectiveOperationSession:
     ) -> bool:
         if self.daily_delivery_scope is None or run_id is None:
             return False
-        prediction_id, use_id, code_sha, config_sha256, channel = (
-            self.daily_delivery_scope
-        )
+        return self._delivery_scope_matches(connection, run_id, self.daily_delivery_scope)
+
+    def allow_frozen_delivery_recovery(self, *, prediction_id: UUID, experimental_model_use_id: UUID,
+                                      code_sha: str, config_sha256: str, channel: str) -> None:
+        """Owner-verified expired notification attempts cannot starve research.
+
+        This does not authorize claims or assert anything about remote delivery.
+        Every new claim still requires daily_delivery_admission's exact scope.
+        """
+        self.require_supervisor_lock(self.series_code)
+        if not _DELIVERY_CHANNEL.fullmatch(channel):
+            raise ValueError("DAILY_DELIVERY_CHANNEL_INVALID")
+        self.frozen_delivery_recovery.add((prediction_id, experimental_model_use_id, code_sha, config_sha256, channel))
+
+    def _delivery_scope_matches(self, connection: psycopg.Connection[Any], run_id: UUID,
+                               scope: tuple[UUID, UUID, str, str, str]) -> bool:
+        prediction_id, use_id, code_sha, config_sha256, channel = scope
         expected_run_id = uuid5(prediction_id, "report-delivery:" + channel)
         expected_schedule_id = uuid5(
             use_id, "daily-delivery-schedule:" + channel
@@ -449,6 +474,7 @@ class PostgresProspectiveOperationSession:
               SELECT 1
               FROM mra.runtime_run AS run
               JOIN mra.runtime_schedule AS schedule USING (schedule_id)
+              JOIN mra.artifact AS artifact ON artifact.artifact_id=run.config_artifact_id
               WHERE run.run_id = %s
                 AND run.schedule_id = %s
                 AND schedule.schedule_code = %s
@@ -457,6 +483,8 @@ class PostgresProspectiveOperationSession:
                 AND run.fire_key = %s
                 AND run.code_sha = %s
                 AND run.config_hash = %s
+                AND artifact.content_sha256=run.config_hash
+                AND run.parent_run_id = %s
                 AND (SELECT count(*) FROM mra.runtime_step AS step
                      WHERE step.run_id = run.run_id) = 1
                 AND EXISTS(
@@ -475,6 +503,7 @@ class PostgresProspectiveOperationSession:
                 "daily-delivery:" + str(prediction_id) + ":" + channel,
                 code_sha,
                 config_sha256,
+                uuid5(prediction_id, "prediction-runtime"),
             ),
         ).fetchone() == (True,)
 
@@ -530,6 +559,8 @@ class PostgresProspectiveOperationSession:
             if self.daily_run_matches(self.connection, run_id):
                 continue
             if self.daily_delivery_run_matches(self.connection, run_id):
+                continue
+            if any(self._delivery_scope_matches(self.connection, run_id, scope) for scope in self.frozen_delivery_recovery):
                 continue
             if self.daily_recovery_run_matches(self.connection, run_id):
                 continue

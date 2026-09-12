@@ -15,6 +15,7 @@ import os
 import time
 from typing import Any, Callable, Iterable, Protocol
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from market_regime_alpha.data_sources.tushare_client import load_dotenv_if_available
 
@@ -36,6 +37,9 @@ class NotificationResult:
     channel: str
     success: bool
     message: str
+    state: str = "UNKNOWN"
+    request_sha256: str | None = None
+    response_sha256: str | None = None
 
 
 class FeishuWebhookNotifier:
@@ -58,28 +62,52 @@ class FeishuWebhookNotifier:
 
     def send_text(self, text: str) -> NotificationResult:
         if not self.webhook_url:
-            return NotificationResult(self.channel, False, "missing FEISHU_WEBHOOK_URL")
+            return NotificationResult(self.channel, False, "missing FEISHU_WEBHOOK_URL", "PROVEN_NOT_SENT")
         payload = build_feishu_text_payload(text, secret=self.secret, timestamp=int(self.clock()))
+        request_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request_hash = hashlib.sha256(request_body).hexdigest()
         request = Request(
             self.webhook_url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            data=request_body,
             headers={"Content-Type": "application/json; charset=utf-8"},
             method="POST",
         )
         try:
             with self.opener(request, timeout=self.timeout_seconds) as response:
-                body = response.read().decode("utf-8")
+                body = response.read(65537)
+                status = response.status
+        except HTTPError as exc:
+            # A real HTTP rejection still has response bytes. Keep their digest;
+            # status alone cannot prove that an external effect was absent.
+            try:
+                with exc:
+                    body = exc.read(65537)
+                response_hash = hashlib.sha256(body).hexdigest()
+            except Exception:
+                response_hash = None
+            return NotificationResult(self.channel, False, "HTTP response not accepted", "UNKNOWN", request_hash, response_hash)
         except Exception as exc:  # noqa: BLE001
-            return NotificationResult(self.channel, False, f"request failed: {exc}")
+            # An interrupted POST may have been accepted. Never expose the URL
+            # or exception text, and never turn transport uncertainty into retry.
+            return NotificationResult(self.channel, False, f"request failed: {type(exc).__name__}",
+                                      request_sha256=request_hash)
+
+        response_hash = hashlib.sha256(body).hexdigest()
+        if type(status) is not int or status != 200 or len(body) > 65536:
+            return NotificationResult(self.channel, False, "unexpected HTTP response", "UNKNOWN", request_hash, response_hash)
 
         try:
-            data = json.loads(body)
-        except json.JSONDecodeError:
-            return NotificationResult(self.channel, False, f"invalid response: {body[:160]}")
+            data = json.loads(body.decode("utf-8"), object_pairs_hook=_unique_response_fields,
+                              parse_constant=_invalid_response_number)
+        except (UnicodeDecodeError, ValueError):
+            return NotificationResult(self.channel, False, "invalid response", "UNKNOWN", request_hash, response_hash)
 
         if _feishu_success(data):
-            return NotificationResult(self.channel, True, "sent")
-        return NotificationResult(self.channel, False, data.get("msg") or data.get("StatusMessage") or str(data))
+            return NotificationResult(self.channel, True, "remote accepted; final delivery unverified",
+                                      "ACCEPTED", request_hash, response_hash)
+        # Even a negative/malformed response is not sufficient evidence for an
+        # automatic duplicate POST. A protocol-specific reconciler must prove absence.
+        return NotificationResult(self.channel, False, "remote acceptance unverified", "UNKNOWN", request_hash, response_hash)
 
 
 def build_feishu_text_payload(text: str, *, secret: str = "", timestamp: int | None = None) -> dict[str, Any]:
@@ -155,7 +183,29 @@ def _parse_channels(channels: str | Iterable[str]) -> list[str]:
     return output or ["auto"]
 
 
-def _feishu_success(data: dict[str, Any]) -> bool:
-    status_code = data.get("StatusCode")
-    code = data.get("code")
-    return status_code in {0, "0", None} and code in {0, "0", None}
+def _feishu_success(data: object) -> bool:
+    """Webhook ACK only; the official response supplies no remote message ID.
+
+    https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot
+    StatusCode is a deprecated compatibility field. Either explicit numeric
+    success field is accepted; every present status must agree and be an int.
+    """
+    if not isinstance(data, dict):
+        return False
+    statuses = [data[key] for key in ("code", "StatusCode") if key in data]
+    return bool(statuses) and all(type(value) is int and value == 0 for value in statuses) and all(
+        key not in data or isinstance(data[key], str) for key in ("msg", "StatusMessage")
+    ) and ("data" not in data or isinstance(data["data"], dict))
+
+
+def _unique_response_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate webhook response field")
+        result[key] = value
+    return result
+
+
+def _invalid_response_number(value: str) -> None:
+    raise ValueError("non-finite webhook response number")

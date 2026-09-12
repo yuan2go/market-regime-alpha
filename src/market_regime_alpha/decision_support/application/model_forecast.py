@@ -329,6 +329,10 @@ class ModelForecastCommands:
                 receipt_id=receipt.receipt_id,
                 result_hash=result_hash,
             )
+            # Computation and reconciliation can cross the Target boundary.
+            # Recheck the exact Use/window immediately before owner commit.
+            if prepared.experimental_model_use_id is not None:
+                uow.model_forecasts.lock_and_revalidate(prepared)
             uow.commit()
             return _model_result(
                 record,

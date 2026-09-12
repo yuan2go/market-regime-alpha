@@ -109,3 +109,18 @@ def test_empty_completed_population_keeps_exact_zero_counts(target_database_url)
         connection.connection.commit()
         connection.connection.read_only = True
         assert daily_predictions._research_disposition_counts(connection) == (0, 0)
+
+
+def test_long_lived_receipt_scope_cost_is_bounded_at_observed_scale(target_database_url):
+    from time import perf_counter
+    import json
+    with _health_relations(target_database_url) as connection:
+        durations = []
+        for _ in range(200):
+            started = perf_counter()
+            assert daily_predictions._research_disposition_counts(connection) == (3, 2)
+            durations.append(perf_counter() - started)
+        p95 = sorted(durations)[189]
+        print(json.dumps({"fixture_receipts": 116147, "iterations": 200, "p95_seconds": p95,
+            "maximum_seconds": max(durations), "evidence": "ISOLATED_SQL_LONG_LIVED_CONNECTION"}))
+        assert p95 < 1.0

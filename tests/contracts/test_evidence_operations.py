@@ -75,7 +75,6 @@ def test_backup_snapshot_restores_exact_rows_and_bytes_in_a_distinct_scope(
     tmp_path: Path,
 ) -> None:
     from uuid import uuid4
-    import subprocess
     from psycopg import sql
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
@@ -115,17 +114,15 @@ def test_backup_snapshot_restores_exact_rows_and_bytes_in_a_distinct_scope(
     restored_url = make_conninfo(**{**params, "dbname": restored_name})
     with psycopg.connect(target_database_url, autocommit=True) as connection:
         connection.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8'").format(sql.Identifier(restored_name)))
+        restored_oid = connection.execute("SELECT oid::bigint FROM pg_database WHERE datname=%s", (restored_name,)).fetchone()[0]
     try:
-        subprocess.run(
-            ["pg_restore", "--exit-on-error", "--dbname", restored_url, str(bundle / "database.dump")], check=True, capture_output=True
-        )
-        import shutil
-
         restored_root = tmp_path / "restored-artifacts"
-        shutil.copytree(bundle / "artifacts", restored_root)
         restored_environment = {"MRA_DATABASE_URL": restored_url, "MRA_ARTIFACT_ROOT": str(restored_root)}
         output = StringIO()
-        assert main(["evidence", "restore-check", "--bundle", str(bundle)], environ=restored_environment, stdout=output) == 0
+        assert main(["evidence", "fresh-restore", "--bundle", str(bundle), "--disposable",
+            "--expected-cluster-identity", identity["cluster_identity"], "--expected-backup-sha256", receipt["backup_sha256"],
+            "--expected-database-name", restored_name, "--expected-database-oid", str(restored_oid)],
+            environ=restored_environment, stdout=output) == 0, output.getvalue()
         checked = json.loads(output.getvalue())
         assert checked["matched"] is True
         assert checked["mismatch_count"] == 0

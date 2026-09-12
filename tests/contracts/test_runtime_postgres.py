@@ -143,6 +143,41 @@ def _run(
     return run_id
 
 
+@pytest.mark.parametrize("kind", ["RECORD_EVIDENCE", "SETTLE_OUTCOME"])
+def test_artifact_response_completion_is_atomic_and_cannot_finish_another_owner(runtime_stack, kind, monkeypatch):
+    runtime, artifacts, pool, _url = runtime_stack
+    schedule = _schedule(runtime)
+    run = _run(runtime, artifacts, schedule, steps=(replace(_step("response", 1), step_kind=kind),))
+    claim = runtime.claim_next(run_id=run, worker_id="response-fixture", lease_duration=timedelta(minutes=1), context=_context("response-claim"))
+    assert claim is not None
+    runtime.start_attempt(claim, _context("response-start"))
+    with pool.connection(read_only=True) as connection:
+        before = connection.execute("SELECT (SELECT count(*) FROM mra.artifact),(SELECT count(*) FROM mra.command_receipt),(SELECT count(*) FROM mra.audit_event)").fetchone()
+    if kind == "SETTLE_OUTCOME":
+        with pytest.raises(StaleFenceError):
+            artifacts.publish(b"not an Outcome", media_type="text/plain", context=_context("wrong-owner-response"), runtime_claim=claim)
+        with pool.connection(read_only=True) as connection:
+            after = connection.execute("SELECT (SELECT count(*) FROM mra.artifact),(SELECT count(*) FROM mra.command_receipt),(SELECT count(*) FROM mra.audit_event)").fetchone()
+        assert after == before
+        assert runtime.inspect_run(run).run_state == "RUNNING"
+    else:
+        original_commit = PostgresUnitOfWork.commit
+        def lost_ack(uow):
+            original_commit(uow)
+            raise RuntimeError("commit acknowledgement lost after durable commit")
+        with monkeypatch.context() as patch:
+            patch.setattr(PostgresUnitOfWork, "commit", lost_ack)
+            with pytest.raises(RuntimeError, match="acknowledgement lost"):
+                artifacts.publish(b"response", media_type="text/plain", context=_context("response"), runtime_claim=claim)
+        assert runtime.inspect_run(run).run_state == "SUCCEEDED"
+        replay = artifacts.publish(b"response", media_type="text/plain", context=_context("response"), runtime_claim=claim)
+        assert replay.replayed
+        with pool.connection(read_only=True) as connection:
+            assert connection.execute("""SELECT receipt.command_kind,receipt.runtime_attempt_id=attempt.attempt_id
+                FROM mra.runtime_attempt attempt JOIN mra.command_receipt receipt ON receipt.receipt_id=attempt.result_receipt_id
+                WHERE attempt.attempt_id=%s""", (claim.attempt_id,)).fetchone() == ("REGISTER_ARTIFACT", True)
+
+
 def test_command_idempotency_returns_original_and_rejects_changed_request(
     runtime_stack: tuple[RuntimeApplication, ArtifactApplication, TargetPostgresPool, str],
 ) -> None:

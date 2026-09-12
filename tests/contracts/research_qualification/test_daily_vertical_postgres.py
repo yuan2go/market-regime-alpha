@@ -41,7 +41,7 @@ def test_generic_daily_target_fit_model_validation_and_replay(target_database_ur
 
 @pytest.mark.parametrize("missing_membership,mature_prices", [(False, False), (False, True), (True, False)])
 def test_completed_model_is_consumed_without_backtest_and_publication_is_replayable(
-    target_database_url, tmp_path, missing_membership, mature_prices, monkeypatch, record_property
+    target_database_url, tmp_path, missing_membership, mature_prices, monkeypatch, record_property, perform_restore=True
 ):
     from dataclasses import replace
     from datetime import timedelta
@@ -367,6 +367,15 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
             assert replayed_delivery["state"] == "DELIVERED"
             assert adapter.keys == [adapter.keys[0], adapter.keys[0]]
             assert delivered["response"]["remote_receipt_id"] == "receipt-1"
+            assert delivered["attempted_this_call"] is True
+            assert replayed_delivery["attempted_this_call"] is False
+            with app._pool.connection(read_only=True) as connection:
+                # ACK Artifact and Runtime completion share the same receipt.
+                assert connection.execute("""SELECT attempt.result_receipt_id=receipt.receipt_id
+                    FROM mra.runtime_attempt attempt JOIN mra.runtime_step step USING(step_id)
+                    JOIN mra.command_receipt receipt ON receipt.receipt_id=attempt.result_receipt_id
+                    WHERE step.run_id=%s AND attempt.state='SUCCEEDED'
+                    AND receipt.command_kind='REGISTER_ARTIFACT'""", (delivered["delivery_run_id"],)).fetchone() == (True,)
 
             with app._pool.connection(read_only=True) as connection:
                 before_counts = connection.execute(
@@ -456,6 +465,15 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
             import time
 
             time.sleep(1.05)
+            # A new supervisor process has no in-memory ownership of the
+            # abandoned Attempt. Only reloaded original plans admit recovery.
+            session.own_attempt_ids.clear()
+            assert session.has_conflicting_attempts("daily-fixture")
+            from market_regime_alpha.interfaces.daily_work import prepare_delivery_recovery
+            prepare_delivery_recovery(app, session)
+            assert not session.has_conflicting_attempts("daily-fixture")
+            assert not session.daily_delivery_run_matches(session.connection,
+                uuid5(plan.prediction_id, "report-delivery:" + crash_adapter.channel))
             expired = delivery.deliver(
                 plan, expiring_adapter, worker_id="daily-fixture"
             )
@@ -909,8 +927,60 @@ def test_completed_model_is_consumed_without_backtest_and_publication_is_replaya
             "automatic_model_change": False,
             "automatic_qualification_change": False,
         }
-        assert reviewed_health["delivery"]["delivered_count"] == 1
+        assert reviewed_health["delivery"]["completed_runtime_count"] == 1
+        assert reviewed_health["delivery"]["final_delivery"] == "UNKNOWN"
         assert reviewed_health["delivery"]["failed_count"] == 1
         assert reviewed_health["delivery"][
             "reconciliation_required_count"
         ] == 2
+        graph = app.daily_prediction_reads.model_training_lineage(plan.model_version_id)
+        assert graph["model_version"]["model_version_id"] == plan.model_version_id
+        assert graph["training_run"]["model_training_run_id"] == graph["model_version"]["model_training_run_id"]
+        assert graph["physical_training_and_fitted_bytes"] == "VERIFIED"
+        assert graph["backtest_model_lineage"][0]["model_version_id"] == plan.model_version_id
+        assert graph["training_datasets"]
+        if mature_prices and perform_restore:
+            _assert_fresh_daily_restore(app, settings, plan, tmp_path)
+
+
+def _assert_fresh_daily_restore(app, settings, plan, tmp_path):
+    """Real pg_restore of the completed canonical fixture, with zero-write replay."""
+    from io import StringIO
+    import json
+    from uuid import uuid4
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    from market_regime_alpha.interfaces.cli import main
+    identity = app.evidence.inventory()["database"]
+    bundle = tmp_path / "daily-backup"
+    backup = app.evidence.backup(bundle, expected_name=identity["name"], expected_oid=identity["oid"], minimum_free_bytes=0)
+    name = "mra_disposable_daily_" + uuid4().hex[:12]
+    with psycopg.connect(settings.database_url, autocommit=True) as connection:
+        connection.execute(sql.SQL("CREATE DATABASE {} TEMPLATE template0 LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8'").format(sql.Identifier(name)))
+        oid = connection.execute("SELECT oid::bigint FROM pg_database WHERE datname=%s", (name,)).fetchone()[0]
+    restored_url = make_conninfo(**{**conninfo_to_dict(settings.database_url), "dbname": name})
+    root = tmp_path / "daily-restored"
+    try:
+        output = StringIO()
+        assert main(["evidence", "fresh-restore", "--bundle", str(bundle), "--disposable",
+            "--expected-cluster-identity", identity["cluster_identity"], "--expected-backup-sha256", backup["backup_sha256"],
+            "--expected-database-name", name, "--expected-database-oid", str(oid)],
+            environ={"MRA_DATABASE_URL": restored_url, "MRA_ARTIFACT_ROOT": str(root)}, stdout=output) == 0, output.getvalue()
+        result = json.loads(output.getvalue())
+        assert result["matched"] and any(item["kind"] == "DAILY_RESEARCH" for item in result["reconciliations"])
+        with bootstrap_application(TargetSettings(restored_url, root)) as restored:
+            before = restored.evidence.inventory()
+            replay = restored.daily_research.replay_completed_cycle(plan)
+            assert replay["matched"] and replay["business_writes"] == 0
+            after = restored.evidence.inventory()
+            assert before["artifact_roster_sha256"] == after["artifact_roster_sha256"]
+            assert before["artifact_count"] == after["artifact_count"]
+            with restored._pool.connection(read_only=True) as connection:
+                locator = connection.execute("SELECT locator FROM mra.artifact WHERE artifact_id=%s",
+                    (plan.code_artifact.artifact_id,)).fetchone()[0]
+            (root / locator).unlink()
+            assert restored.evidence.restore_check(bundle)["matched"] is False
+    finally:
+        with psycopg.connect(settings.database_url, autocommit=True) as connection:
+            connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))

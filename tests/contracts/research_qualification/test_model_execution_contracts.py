@@ -52,8 +52,9 @@ def _training() -> FrozenModelTrainingInput:
     )
 
 
-def test_explicit_ridge_adapter_is_deterministic_across_fit_and_predict() -> None:
-    training = _training()
+@pytest.mark.parametrize("version", ["1.0", "2.0"])
+def test_explicit_ridge_adapter_is_deterministic_across_fit_and_predict(version) -> None:
+    training = replace(_training(), algorithm_version=version)
     trainer = DeterministicRidgeTrainer()
     fitted = trainer.fit(training)
 
@@ -84,6 +85,8 @@ def test_explicit_ridge_adapter_is_deterministic_across_fit_and_predict() -> Non
     assert first == second
     assert tuple(item.row_id for item in first) == (_id(20), _id(21))
     assert all(item.point_estimate.is_finite() for item in first)
+    with pytest.raises(ValueError, match="differ from frozen"):
+        predictor.predict(replace(model, algorithm_version="1.0" if version == "2.0" else "2.0"), batch)
 
 
 def test_model_adapter_fails_closed_for_wrong_family_or_frozen_contract() -> None:

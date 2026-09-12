@@ -595,7 +595,11 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresBacktestReportSourcePort(pool),
         backtest_replay,
     )
-    return TargetApplication(
+    def verify_daily_evidence() -> dict[str, Any]:
+        from market_regime_alpha.interfaces.daily_health import daily_health
+        return daily_health(application, complete_history=True, replay=True)
+
+    application = TargetApplication(
         daily_prediction_reads=PostgresDailyPredictionReads(pool, byte_store),
         calendar_continuity_reads=PostgresCalendarContinuityReads(pool, byte_store),
         operational_diagnostics=PostgresOperationalDiagnostics(pool),
@@ -609,6 +613,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             PostgresEvidenceBackup(settings.database_url, settings.artifact_root),
             PostgresArchiveVerificationPort(pool).verify,
             backtest_replay.verify,
+            verify_daily_evidence,
         ),
         runtime=runtime_application,
         artifacts=artifact_application,
@@ -707,6 +712,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         _pool=pool,
     )
+    return application
 
 
 def bootstrap_database(settings: TargetSettings) -> SchemaVerification:

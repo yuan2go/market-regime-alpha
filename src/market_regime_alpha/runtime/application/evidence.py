@@ -11,6 +11,7 @@ from market_regime_alpha.shared.hashing import canonical_json_sha256
 
 class EvidenceSnapshotPort(Protocol):
     def snapshot(self) -> dict[str, Any]: ...
+    def operation_scope(self) -> dict[str, Any]: ...
 
 
 class EvidenceIntegrityPort(Protocol):
@@ -33,6 +34,7 @@ class EvidenceApplication:
         backup: EvidenceBackupPort,
         verify_archive: Callable[[UUID], Any],
         verify_backtest: Callable[[UUID], Any],
+        verify_daily: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._source = source
         self._integrity = integrity
@@ -40,6 +42,10 @@ class EvidenceApplication:
         self._backup = backup
         self._verify_archive = verify_archive
         self._verify_backtest = verify_backtest
+        self._verify_daily = verify_daily
+
+    def operation_scope(self) -> dict[str, Any]:
+        return self._source.operation_scope()
 
     def inventory(self, *, logical_role: str = "UNSPECIFIED", records_directory: Path | None = None) -> dict[str, Any]:
         snapshot = self._source.snapshot()
@@ -118,4 +124,15 @@ class EvidenceApplication:
                     })
                 else:
                     results.append({"kind": kind, "id": item[key], "matched": observed.matched, "mismatch_count": observed.mismatch_count})
+        if self._verify_daily is not None:
+            daily = self._verify_daily()
+            for row in daily["ledger"]:
+                replay = row.get("replay", {})
+                matched = row["state"] != "INTEGRITY_BLOCKED" and replay.get("matched") is not False
+                results.append({"kind": "DAILY_RESEARCH", "id": str(row["run_id"]),
+                    "integrity_matched": matched, "mismatch_count": 0 if matched else 1,
+                    "completion_replay_matched": replay.get("matched"),
+                    "completion_replay_state": "VERIFIED" if replay.get("matched") is True else
+                        "MISMATCH" if replay.get("matched") is False else "NOT_RUN",
+                    "execution_state": row["state"], "replay": replay, "business_writes": 0})
         return results

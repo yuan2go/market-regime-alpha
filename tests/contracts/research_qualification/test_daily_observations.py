@@ -121,7 +121,24 @@ def test_malformed_filters_fail_before_read(observation_app):
 def test_integrity_blocker_is_not_hidden_by_filters(observation_app):
     observation_app.row["state"] = "INTEGRITY_BLOCKED"
     with pytest.raises(ArtifactIntegrityError, match="unreconciled daily lineage"):
-        surface.daily_observations(observation_app.app, model_version_id=UUID(int=0))
+        surface.daily_observations(observation_app.app, model_version_id=observation_app.plan.model_version_id)
+
+
+def test_known_unrelated_model_does_not_poison_selected_lineage(observation_app):
+    observation_app.row["state"] = "INTEGRITY_BLOCKED"
+    result = surface.daily_observations(observation_app.app, model_version_id=UUID(int=0))
+    assert result["cycles"] == result["unavailable"] == []
+    assert result["scope_complete"] is True
+
+
+def test_unattributable_integrity_failure_remains_visible(observation_app):
+    observation_app.row["state"] = "INTEGRITY_BLOCKED"
+    del observation_app.row["model_version_id"]
+    result = surface.daily_observations(observation_app.app, model_version_id=UUID(int=0))
+    assert result["scope_complete"] is False
+    assert result["unattributed_integrity_blockers"][0]["run_id"] == observation_app.row["run_id"]
+    with pytest.raises(ArtifactIntegrityError, match="unreconciled daily lineage"):
+        surface.daily_observations(observation_app.app)
 
 
 class _LedgerReadFixture:
@@ -166,8 +183,13 @@ class _LedgerReadFixture:
         elif "clock_timestamp() AS observed_at" in statement:
             self.rows = [{"observed_at": self.now}]
         elif "FROM mra.runtime_run" in statement:
-            values = self.runs[:513] if "LIMIT 513" in statement else self.runs
-            self.rows = [dict(row) for row in values]
+            if "count(*) AS count" in statement:
+                self.rows = [{"work_kind": "model", "state": "FAILED", "count": len(self.runs)}] if self.runs else []
+            elif "LIMIT 128" in statement:
+                self.rows = [{"run_id": row["run_id"]} for row in self.runs[-128:]]
+            else:
+                selected = parameters[0]
+                self.rows = [dict(row) for row in self.runs if selected is None or row["run_id"] in selected]
         elif "FROM mra.runtime_step" in statement or "FROM mra.runtime_attempt" in statement:
             self.rows = []
         elif "FROM mra.trading_session" in statement:
@@ -202,14 +224,40 @@ def _historical_app(plan, count, monkeypatch):
 
 def test_observation_keeps_more_than_512_requests_while_live_health_remains_bounded(observation_app, monkeypatch):
     app, database = _historical_app(observation_app.plan, 514, monkeypatch)
-    with pytest.raises(ValueError, match="explicit row budget"):
-        daily_health(app)
+    health = daily_health(app)
+    assert len(health["ledger"]) == 128
+    assert health["ledger"][0]["prediction_id"] == UUID(int=1000 + 514 - 128)
+    assert health["history_truncated"] is True
+    assert health["complete_runtime_counts"] == [{"work_kind": "model", "state": "FAILED", "count": 514}]
+    assert health["scopes"]["ALL_HISTORY"]["state"] == "PARTIAL_DETAIL"
+    assert health["scopes"]["LAST_N_TRADING_SESSIONS"]["state"] == "PARTIAL_DETAIL"
+    assert health["scopes"]["POST_CURRENT_CUTOVER"] == {
+        "state": "NOT_ESTIMABLE", "reason_code": "CUTOVER_BOUNDARY_NOT_SUPPLIED"}
     result = surface.daily_observations(app)
     assert len(result["unavailable"]) == 514
     assert len({row["prediction_id"] for row in result["unavailable"]}) == 514
     assert {row["state"] for row in result["unavailable"]} == {"FAILED_TERMINAL"}
     assert result["cycles"] == [] and result["business_writes"] == 0
     assert database.read_only_connections and all(database.read_only_connections)
+
+
+def test_empty_publication_replay_is_checked(observation_app, monkeypatch):
+    app, database = _historical_app(observation_app.plan, 1, monkeypatch)
+    database.runs[0]["state"] = "SUCCEEDED"
+    app.daily_prediction_reads.ready = lambda _: SimpleNamespace(members=[])
+    app.daily_prediction_reads.forecast_projection = lambda _: {
+        "published_at": observation_app.plan.decision_time, "denominators": {"model_prediction": 0},
+        "population": [], "predictions": [],
+    }
+    calls = []
+    def replay(plan):
+        calls.append(plan.prediction_id)
+        return {"matched": True, "mismatch_count": 0, "business_writes": 0}
+    app.daily_research = SimpleNamespace(replay=replay)
+    result = daily_health(app, replay=True)
+    assert calls == [UUID(int=1000)]
+    assert result["ledger"][0]["state"] == "EMPTY_PUBLICATION"
+    assert result["ledger"][0]["replay"]["matched"] is True
 
 
 def test_complete_history_preserves_health_scopes_denominators_and_terminal_failures(observation_app, monkeypatch):

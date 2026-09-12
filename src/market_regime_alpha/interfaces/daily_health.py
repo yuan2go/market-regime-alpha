@@ -113,6 +113,8 @@ def daily_health(app: Any, *, cutover_at: datetime | None = None, recent_session
             if outcome is None:
                 if publication["denominators"]["model_prediction"] == 0:
                     row.update(state="EMPTY_PUBLICATION", reason_code="NO_PREDICTED_MEMBERS")
+                    if replay:
+                        row["replay"] = app.daily_research.replay(plan)
                     continue
                 raise ValueError("PUBLISHED_PREDICTION_LACKS_OUTCOME_RUN")
             if outcome["plan_content"] != encode_daily_plan(plan):
@@ -180,6 +182,12 @@ def daily_health(app: Any, *, cutover_at: datetime | None = None, recent_session
         }
     if cutover_at is None:
         summaries["POST_CURRENT_CUTOVER"] = {"state": "NOT_ESTIMABLE", "reason_code": "CUTOVER_BOUNDARY_NOT_SUPPLIED"}
+    if facts.get("history_truncated"):
+        for name in summaries:
+            if name == "POST_CURRENT_CUTOVER" and cutover_at is None:
+                continue
+            summaries[name].update(state="PARTIAL_DETAIL", complete=False,
+                reason_code="RECENT_128_PUBLICATIONS_AND_CHILDREN; USE_BACKLOG_CURSOR_OR_COMPLETE_OBSERVATIONS")
     return {
         "authority": "READ_ONLY_OPERATIONAL_PROJECTION",
         "observed_at": now,
@@ -188,6 +196,8 @@ def daily_health(app: Any, *, cutover_at: datetime | None = None, recent_session
         "recent_sessions": recent,
         "requested_recent_sessions": recent_sessions,
         "ledger": ledger,
+        "complete_runtime_counts": facts.get("complete_runtime_counts"),
+        "history_truncated": facts.get("history_truncated", False),
         "scopes": summaries,
         "capture_freshness": facts["freshness"],
         "artifact_verification": facts["artifact_verification"],

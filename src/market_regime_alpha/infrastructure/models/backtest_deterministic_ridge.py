@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from uuid import UUID
+from market_regime_alpha.infrastructure.models.deterministic_ridge import RIDGE_FORMAT_VERSIONS
 
 from market_regime_alpha.research_qualification.domain.backtest import (
     BacktestModelTrainingRecipe,
@@ -25,7 +26,7 @@ class DeterministicRidgeBacktestModelAdapter:
     """Translate a frozen ridge recipe without leaking ridge into the engine."""
 
     def supports(self, recipe: BacktestModelTrainingRecipe) -> bool:
-        return recipe.algorithm_code == "deterministic_ridge" and recipe.algorithm_version in {"1.0", "1.0.0"}
+        return recipe.algorithm_code == "deterministic_ridge" and recipe.algorithm_version in RIDGE_FORMAT_VERSIONS
 
     def training_request(
         self,

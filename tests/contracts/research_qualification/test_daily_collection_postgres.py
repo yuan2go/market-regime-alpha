@@ -121,6 +121,13 @@ def test_collection_claim_capture_normalize_and_restart_keep_exact_bytes(target_
             code_artifact=artifact,
             config_artifact=artifact,
         )
+        import json
+        scope = app.artifacts.publish(json.dumps({"schema": "selection-universe-scope-v1",
+            "classification_code": frozen.classification_code, "classification_scheme": frozen.classification_scheme,
+            "instrument_ids": [str(identity) for identity in frozen.instrument_ids],
+            "market_provider_product_id": str(frozen.provider_product_id)}, sort_keys=True,
+            separators=(",", ":")).encode(), media_type="application/json", context=_context("collection-scope"))
+        frozen = replace(frozen, universe_scope=ArtifactBinding(scope.artifact_id, scope.content_sha256, scope.size_bytes))
         collection = DailyCollectionPlan(frozen, "input", 1, instant)
         identity = app.evidence.inventory()["database"]
         fake = DailyProvider()

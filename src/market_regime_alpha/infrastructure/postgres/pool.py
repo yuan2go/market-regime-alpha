@@ -56,6 +56,7 @@ class TargetPostgresPool:
     def connection(self, *, read_only: bool = False) -> Iterator[psycopg.Connection[Any]]:
         self._pool.open(wait=False)
         connection = self._pool.getconn()
+        failure: BaseException | None = None
         try:
             connection.read_only = read_only
             with nullcontext() if read_only else canonical_writer_admission(connection):
@@ -64,11 +65,25 @@ class TargetPostgresPool:
                     # Commit preserves prepared statements on successful reads;
                     # rollback on every owner check invalidates that cache.
                     connection.commit()
+        except BaseException as exc:
+            failure = exc
+            raise
         finally:
-            if connection.info.transaction_status != 0:
-                connection.rollback()
-            connection.read_only = False
-            self._pool.putconn(connection)
+            try:
+                if not connection.closed:
+                    if connection.info.transaction_status != 0:
+                        connection.rollback()
+                    connection.read_only = False
+            except Exception as cleanup_error:
+                connection.close()
+                if failure is None:
+                    raise
+                failure.add_note("Pool cleanup failed: " + type(cleanup_error).__name__)
+            finally:
+                # A closed connection still occupies a checked-out pool slot.
+                # Returning it lets psycopg discard/replace it; never lose capacity
+                # or replace the business exception with a rollback-on-closed error.
+                self._pool.putconn(connection)
 
     def close(self) -> None:
         self._pool.close()

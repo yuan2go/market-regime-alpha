@@ -8,6 +8,45 @@ the next experiment or deployment. Repository hygiene is complete at the
 implementation recorded in the archive index. Business feature development and
 live configuration changes require their own explicit scope.
 
+## Engineering delivered: continuous research reliability
+
+The continuous research reliability package starts from main
+`76c19a60f5106dd184a20fdaf46d786629a9cd99`. Development and disposable verification
+are authorized. Original database writes, service changes, installation activation,
+external messages and trading require separate session authorization.
+
+Reuse the existing composition, Runtime and owners. Preserve released SQL,
+protocols, old model decoding and all failed/unknown historical work. Execute
+these dependency-coherent checkpoints, with the following risk-directed gates:
+
+| Work / risk | Implementation boundary | Necessary verification |
+|---|---|---|
+| Model serialization changes fitted mathematics | `deterministic_linear`, concrete trainer and Model publisher | Independent ordinary/constant/tiny-scale arithmetic; fit/load/predict round trip; invalid/overflow values; old bytes decode |
+| Notification ACK overclaim, duplicate effects, stale signals | `notifications`, `daily_delivery`, daily discovery/service/CLI | Local HTTP protocol responses; real PostgreSQL attempts, UNKNOWN/restart, expiry, cross-day discovery; no real external messages |
+| Fixed scan limits and work starvation | Daily query ports, `daily_service`, canonical CLI tick | Keyset pages across Uses, visible excluded/failed counts, prediction/outcome/prospective budget fairness, deadline abstention |
+| Health exceptions obscure committed results; safety rejection swallowed | CLI stage boundaries, service and Pool as needed | PostgreSQL cancellation/rollback, original exception, guard refusal, drain; measured service stages at representative roster scale |
+| Incomplete calendar/input readiness and unreachable cohorts | Existing Market/calendar owner and validity capacity consumer | Captured calendar gaps/duplicates/failure/restart, true readiness roster, use lifetime and publication/maturity/operating budgets |
+| Recovery substitutes current configuration or repeats completed work | Daily original-plan recovery, owner reports and CLI | Crash after publication/partial Outcome/completed Evaluation, expired/revoked Use, old installation identity, zero-write replay |
+| Backup copy mistaken for restore; broken Model lineage hidden | Existing evidence/backup/restore and model queries/CLI | Fresh PostgreSQL restore, schema/owner roster/Artifact hashes and report replay; corruption refusal; exact Model chain |
+
+- [x] Confirm current call chains and reproduce gaps before corrections.
+- [x] Implement numerical and delivery contracts with compatibility checks.
+- [x] Wire bounded discovery, fairness, health isolation and operational commands.
+- [x] Verify calendar/capacity, frozen recovery, backup/restore and Model lineage.
+- [x] Run affected PostgreSQL/runtime regressions, static/docs/inventory checks,
+  build and independent wheel CLI smoke; retain initial failures and reruns.
+- [x] Record implementation and final revisions plus five separate gates:
+  IMPLEMENTATION, TARGETED_ENGINEERING_VERIFICATION, ORIGINAL_SCOPE_DEPLOYMENT,
+  SUSTAINED_REAL_SESSION_PROOF and RESEARCH_VALIDITY.
+
+No synthetic future sessions establish continuity. Naturally elapsed sessions,
+original-scope activation and research adequacy remain independent evidence gates.
+The implementation and isolated verification at
+`622a9f38ad9a3f074662ac7e6b0961181b29bc43` are recorded in
+[Current State](Current-State.md). The final checkpoint adds verification
+documentation only. Original activation, real remote delivery and sustained
+natural-session proof remain unexecuted and require their stated prerequisites.
+
 ## Completed repository maintenance
 
 Current entry points, owner call chains, schema facts and test contracts are
@@ -187,7 +226,8 @@ or financial formula change is in scope.
   handling. Never infer open days from weekdays. Preserve old pending plans.
 - [x] Prove v2 capacity failure from actual Provider calendar and exact Use
   lifetime: 12 eligible sessions / at most 384 observations against 20/500.
-- [ ] Register an explicitly authorized successor
+- [x] Subsequently completed by the ModelUse rollover recorded in Current State:
+  register an explicitly authorized successor
   experimental use through its owner, with the same Model/Feature/Target/baseline,
   a future valid_from and a bounded lifetime. Only after actual calendar capacity
   is known, freeze v3 with unchanged 20-session/500-observation floors and explicit

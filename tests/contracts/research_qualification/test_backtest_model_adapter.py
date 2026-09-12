@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import pytest
+
 from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -60,8 +63,9 @@ def _recipe() -> BacktestModelTrainingRecipe:
     )
 
 
-def test_ridge_adapter_translates_frozen_recipe_without_engine_defaults() -> None:
-    recipe = _recipe()
+@pytest.mark.parametrize("version", ["1.0.0", "2.0", "2.0.0"])
+def test_ridge_adapter_translates_frozen_recipe_without_engine_defaults(version) -> None:
+    recipe = replace(_recipe(), algorithm_version=version)
     requirement = BacktestModelTrainingRequirement(
         requirement_id=UUID(int=1),
         ordinal=1,
@@ -100,6 +104,7 @@ def test_ridge_adapter_translates_frozen_recipe_without_engine_defaults() -> Non
 
     assert adapter.supports(recipe) is True
     assert request.training.algorithm_code == recipe.algorithm_code
+    assert request.training.algorithm_version == version
     assert request.training.algorithm_sha256 == recipe.implementation_sha256
     assert request.training.ridge_alpha == Decimal("0.01")
     assert request.training.evaluation_run_id == evaluation.evaluation_run_id

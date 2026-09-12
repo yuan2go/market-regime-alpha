@@ -187,6 +187,54 @@ class PostgresEvidenceBackup:
             "backup_sha256": receipt["backup_sha256"],
         }
 
+    def fresh_restore(self, bundle: Path, *, expected_name: str, expected_oid: int,
+                      expected_cluster_identity: str, expected_backup_sha256: str) -> None:
+        """Explicit empty disposable target only; never select or replace a writer."""
+        receipt = json.loads((bundle / "receipt.json").read_text())
+        inventory = (bundle / "inventory.json").read_bytes()
+        dump = bundle / "database.dump"
+        with dump.open("rb") as stream:
+            import hashlib
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if (receipt["snapshot_contract"] != _CONTRACT or digest != expected_backup_sha256 or digest != receipt["backup_sha256"]
+                or dump.stat().st_size != receipt["backup_size_bytes"]
+                or sha256(inventory).hexdigest() != receipt["inventory_sha256"]):
+            raise ValueError("RESTORE_BUNDLE_INTEGRITY_FAILED")
+        snapshot = json.loads(inventory)
+        physical = FilesystemEvidenceIntegrity(bundle / "artifacts").verify(snapshot["artifacts"])
+        if not physical["matched"] or physical["extra_object_count"]:
+            raise ValueError("RESTORE_ARTIFACT_ROSTER_INVALID")
+        if self._root.exists() or self._root == Path(receipt["source_artifact_root"]).resolve():
+            raise ValueError("RESTORE_REQUIRES_NEW_DISTINCT_ARTIFACT_ROOT")
+        with psycopg.connect(self._url, autocommit=True) as connection:
+            from market_regime_alpha.infrastructure.postgres.prospective_operation_session import _DATABASE_WRITER_KEY
+            if connection.execute("SELECT pg_try_advisory_lock(hashtextextended(%s,0))", (_DATABASE_WRITER_KEY,)).fetchone() != (True,):
+                raise ValueError("RESTORE_TARGET_WRITER_ADMISSION_CONFLICT")
+            identity = connection.execute("SELECT current_database(), oid::bigint, (pg_control_system()).system_identifier::text FROM pg_database WHERE datname=current_database()").fetchone()
+            if identity != (expected_name, expected_oid, expected_cluster_identity):
+                raise ValueError("RESTORE_TARGET_IDENTITY_CHANGED")
+            if (identity[2], identity[1]) == (receipt["database"]["cluster_identity"], receipt["database"]["oid"]):
+                raise ValueError("RESTORE_REQUIRES_DISTINCT_DATABASE")
+            if connection.execute("SELECT EXISTS(SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND c.relkind IN ('r','p','v','m','S','f'))").fetchone() != (False,):
+                raise ValueError("RESTORE_REQUIRES_EMPTY_DISPOSABLE_DATABASE")
+            if connection.execute("""SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname NOT IN
+                ('pg_catalog','information_schema','public','pg_toast')) OR EXISTS(
+                SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public')""").fetchone() != (False,):
+                raise ValueError("RESTORE_REQUIRES_PRISTINE_DATABASE_NAMESPACE")
+            if connection.execute("SELECT count(*) FROM pg_stat_activity WHERE datid=(SELECT oid FROM pg_database WHERE datname=current_database()) AND pid<>pg_backend_pid()").fetchone() != (0,):
+                raise ValueError("RESTORE_TARGET_HAS_OTHER_CONNECTIONS")
+            params = {key: str(value) for key, value in conninfo_to_dict(self._url).items() if value is not None}
+            environment = dict(os.environ)
+            password = params.pop("password", None)
+            if password is not None:
+                environment["PGPASSWORD"] = password
+            try:
+                subprocess.run(["pg_restore", "--exit-on-error", "--single-transaction",
+                    "--dbname=" + make_conninfo("", **params), str(dump)], env=environment, check=True, capture_output=True)
+            except subprocess.CalledProcessError as exc:
+                raise ValueError("RESTORE_DATABASE_LOAD_FAILED") from exc
+            shutil.copytree(bundle / "artifacts", self._root)
+
     def records(self, directory: Path, database: dict[str, Any]) -> dict[str, Any]:
         backups = []
         drills = []

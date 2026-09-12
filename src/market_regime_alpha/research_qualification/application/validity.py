@@ -144,6 +144,8 @@ def validity_report(observations: dict[str, Any], protocol: dict[str, Any], cale
                     calendar_coverage_witness: dict[str, Any] | None = None,
                     operational_observations: dict[str, Any] | None = None) -> dict[str, Any]:
     require_frozen_protocol(protocol)
+    if observations.get("scope_complete") is False or (operational_observations or {}).get("scope_complete") is False:
+        raise ArtifactIntegrityError("VALIDITY_UNATTRIBUTED_HISTORY_REQUIRES_IDENTITY_RECOVERY")
     if target_session_from and target_session_to and target_session_from > target_session_to:
         raise ValueError("INVALID_SESSION_RANGE")
     cycles = observations["cycles"]

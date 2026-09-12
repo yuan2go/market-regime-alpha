@@ -7,6 +7,144 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+## Continuous research reliability engineering
+
+The current development baseline is main
+`76c19a60f5106dd184a20fdaf46d786629a9cd99`. This package changes the existing
+daily/Runtime composition; it does not activate an installation, mutate the
+original operating database or send a real notification. The operational
+cutoffs below remain historical observations, not this package's deployment.
+
+The service gives current predictions and pending Outcomes separate bounded
+work opportunities and alternates daily/prospective first access to the existing
+tick wall-clock budget. Outcome work uses exact keyset pages across all Model
+Uses. Notifications inspect the newest outstanding publication independently
+of a bounded history page; UNKNOWN and old unverified success claims remain
+visible without another POST. Local cursors retain no authorization or business
+state; a restart rediscovers original PostgreSQL work.
+
+Per-tick scope reads no longer enumerate the complete Artifact roster twice.
+Startup and backup still verify full physical bytes; installed source identities
+and principal privileges, fences, resources and backup age are rechecked before
+actions. Successful identity checks are not a new unbounded cache. Failed
+read-only observations retain committed owner results; safety rejection remains
+sticky and blocks subsequent writes. Pool and writer-admission cleanup preserve
+the original exception and return broken connections for replacement.
+
+Feishu accepts only explicit integer success codes with consistent response
+types and no duplicate JSON keys. Its webhook ACK is ACCEPTED with final
+delivery UNKNOWN and no invented remote ID. New v2 local response artifacts
+bind report, request, attempt, response digest and database time. Accepted
+response Artifact, Receipt, Audit and Runtime completion commit atomically.
+Old v1 response bytes remain readable and unmodified; the former local hash
+claim is presented as LEGACY_DELIVERY_CLAIM_UNVERIFIED.
+
+Membership readiness now reads the complete Selection evidence roster, not only
+a Classification header. The existing calendar owner has an explicit refresh
+CLI. Validity includes a separate measured-budget scenario over exact captured
+windows and the frozen sample/buffer floors. Missing measurements return
+NOT_ESTIMABLE; a missed first window does not erase sufficient later capacity.
+No Use expiry, cohort, threshold, online model or frozen protocol is changed.
+
+New Ridge format v2 preserves binary64 parameters through fit/serialization/
+load/predict and refuses unrepresentable nonconstant scales before publication.
+Version dispatch is wired through the Backtest adapter. Format v1 decoding and
+the existing installed ModelVersion retain their original semantics.
+
+The existing evidence owner can fresh-restore a pinned dump into an explicitly
+empty disposable database and new root, then verify schema, full table hashes,
+Artifact roster and daily report/replay. It never selects that database as the
+operational writer. Daily integrity and completion replay are reported separately;
+pending and failed facts retain NOT_RUN completion status. The same-model
+lineage CLI reloads FIT/TrainingRun/fitted bytes/Backtest/Use and exact daily
+Prediction/OutcomeRevision/Evaluation/report identities without fitting again.
+
+Implementation revision is `622a9f38ad9a3f074662ac7e6b0961181b29bc43`, including
+numerical checkpoints `240815dd17a082539a3a72ce4cff621e3bcb7c70` and
+`c5f8f14c79d952c6ec30788047fb58142783c8c6`. The final documentation checkpoint
+is a descendant with the same executable source. Development used an isolated
+task branch and worktree. No push, PR or merge was
+performed; the original checkout's unrelated IDE modification was preserved.
+No migration was necessary; released SQL, archived evidence and frozen protocol
+bytes are unchanged.
+
+Verification ran with Python 3.12.2, the frozen `uv.lock`, PostgreSQL 16 in a
+separate local Unix-socket cluster and disposable database/root. Contract
+fixtures are engineering evidence. The real operating database, Provider and
+supervised service were not substituted with these fixtures.
+
+| Executed verification | Result and evidence boundary |
+|---|---|
+| `uv sync --frozen --extra dev --extra postgres` | PASS |
+| Numerical reproduction and model/Backtest contracts | Initial 7 FAIL; corrected round-trip group 23 PASS; version dispatch included in later contracts |
+| Notification contracts and local HTTP POST substitute | Initial 18 FAIL; strict response/UNKNOWN/expiry and adapter coverage included in 115 PASS contracts/CLI group; real outbound NOT_RUN |
+| Expanded shared Runtime/Pool/permissions/installation/recovery PostgreSQL regression | First 221 PASS / 5 FAIL; affected suites and capacity consumers rerun 103 PASS; original failures retained |
+| Original-plan daily vertical, delivery recovery, fresh restore and restricted principal closure | 38 PASS; actual dump restore into another database/new root, daily report replay and missing Artifact refusal included |
+| Atomic Artifact/Runtime wrong-owner rollback and lost commit acknowledgement | 2 PASS on real PostgreSQL |
+| Final paging, observations, negative evidence, capacity and validity boundaries | 68 PASS; 130 publication roots plus 130 children across Uses, 256 bounded details and 260 complete facts |
+| Real connection loss/cancellation and injected rollback loss | 5 PASS; original exceptions and replacement pool capacity retained |
+| Receipt query at representative history scale | PASS: 116,147 isolated receipts, 200 reads on one long-lived connection; p95 0.000536 seconds, maximum 0.001486 seconds |
+| `uv run python -m ruff check .`; `uv run python -m mypy` | PASS; mypy checked 652 source files |
+| Inventory regeneration, docs links, repository hygiene and focused tooling tests | PASS; 14 tooling tests |
+| `uv run python -m build --installer uv --dependency-constraints-txt ... --outdir ...` | PASS sdist and wheel; build backend pinned to locally available setuptools 84.0.0 |
+| Fresh wheel environment, hash-checked frozen dependencies, CLI outside checkout | PASS: 12 commands, exact five packaged SQL hashes, schema verification, both backlog queries, missing-model first blocker and evidence verify; 194 table counts unchanged by read commands |
+| `git diff --check` | PASS |
+| Full repository long regression; historical external-scope suite | NOT_RUN; risk-directed affected-owner regression used |
+
+Counts above are separate overlapping runs, not an accumulated test total.
+The final 68-test command was:
+
+```bash
+uv run python -m pytest -o addopts= -q tests/contracts/research_qualification/test_daily_work_discovery_postgres.py tests/contracts/research_qualification/test_daily_observations.py tests/contracts/test_evidence_negative_history.py tests/contracts/research_qualification/test_operational_capacity.py tests/contracts/research_qualification/test_validity_report.py
+uv run python -m pytest -o addopts= -q tests/contracts/test_pool_failure_reliability_postgres.py
+uv run python scripts/repository_inventory.py --write
+uv run python scripts/check_repository_hygiene.py
+uv run python scripts/check_docs_links.py
+uv run python -m pytest -o addopts= -q tests/scripts/test_check_docs_links.py tests/scripts/test_repository_hygiene.py
+```
+
+The wheel SHA-256 is
+`434365d275c78b2fc36f5ad08fcc6c94eedbd1aae5e935b79b3e528db7a7e1a0`.
+Its independent smoke ran `mra --help`, daily/backlog/deliver/calendar/restore
+help, `db bootstrap`, `db verify`, both `research daily backlog` kinds,
+`research daily lineage` and `evidence verify`. Bootstrap was confined to the
+disposable target. An initial smoke assertion incorrectly assumed more than ten
+SQL resources; the corrected check verifies the exact committed five names and
+hashes. Other first-run logs retain local proxy interference, obsolete bounded
+health assertions, invalid scope fixtures, legacy URL parsing, static typing
+failures and their corrected reruns. No failed operational fact was rewritten.
+
+The near-scale measurement isolates receipt SQL cost; it does not measure a
+live Provider, end-to-end operating cadence or sustained installed-service
+performance. Those remain original-scope deployment observations.
+
+The same-model disposable traversal verified FIT Evaluation/Dataset →
+TrainingRun/fitted Artifact → Backtest/report → ExperimentalModelUse →
+Prediction → OutcomeRevision → Evaluation/report with physical verification
+and zero-write replay. The current v3 source protocol names ModelVersion
+`fe47f296-17dc-5654-a9eb-cf149f5b01c9` and Use
+`3a426d5f-702f-56fb-9563-0bc6256b558c`, first eligible Sep-15, with frozen
+20-session/500-observation floors. These identities were read from source,
+not reloaded from the original operating owner in this session.
+
+| Acceptance gate | Current result |
+|---|---|
+| IMPLEMENTATION | PASS: executable owners, composition, CLI and current runbook delivered |
+| TARGETED_ENGINEERING_VERIFICATION | PASS within the isolated contract, PostgreSQL, restore and installed-wheel scopes above |
+| ORIGINAL_SCOPE_DEPLOYMENT | BLOCKED: original connection/root not configured and no session authorization for activation or writes |
+| SUSTAINED_REAL_SESSION_PROOF | NOT_RUN: no original activation or natural-session observation for this implementation |
+| RESEARCH_VALIDITY | NOT_ESTIMABLE: no this-session original-owner evidence reload or naturally matured v3 cohort; no Alpha claim |
+
+The first remaining condition is the original database/Artifact/profile identity
+reload. After explicit operational authorization, follow the existing runbook's
+verified backup, drain, installation/profile preparation, preflight and restart
+sequence; never choose the restore target as writer. Check the same ModelVersion
+with `research daily lineage`, then record complete ledgers for at least three
+natural trading sessions (five preferred), timely publications, exact mature
+Outcomes and report replay. Real remote acceptance and final delivery require
+separate authorized observations. No future clock or fixture counts as one of
+those natural sessions.
+
 ## ModelUse rollover and Validity v3 activation
 
 The authorized original-database owner maintenance is complete. Exactly one
@@ -78,9 +216,9 @@ This is a lifecycle failure, not a request to wait for more observations.
 
 The read-only feasibility projection and successor/cohort guards preserve v1/v2
 bytes. A long-lived successor Use and v3 require actual owner registration and a
-new database-clock declaration. The original database's authentication boundary
-currently prevents that registration; no runtime privilege is expanded and no
-v3 is declared from a fixture or an unregistered identity.
+new database-clock declaration. At that previous cutoff, authentication
+prevented registration. The later owner-authorized rollover above supersedes
+that blocker; no fixture or unregistered identity declares a real protocol.
 
 The observed pre-open empty-response failure has a narrow positive-evidence
 reconciliation. The original terminal Run remains failed. Future successful
@@ -113,12 +251,12 @@ with cadence, financial semantics and the 120-second guard unchanged. Its new
 backup, mirror, preflight and two actual ticks passed. Complete future one-minute
 window capacity remains unobserved; no terminal work was reopened.
 
-Performance and backup recovery contracts pass their bounded observations. The
-overall reliability/cohort exit gate is **NO** until owner maintenance is
-authorized, a real successor ModelUse is registered and immutable future v3 is
-declared. The reviewed maintenance remains unexecuted; HBA and runtime grants
-remain unchanged. One completed real session still leaves sustained proof
-BLOCKED_BY_ELAPSED_REAL_TIME and MODEL_VALUE NOT_ESTIMABLE / ALPHA_PROVEN NO.
+At that previous cutoff, performance and backup recovery contracts passed their
+bounded observations. The reliability/cohort exit gate remained **NO** pending
+owner maintenance, a successor ModelUse and immutable future v3. Those maintenance
+conditions were subsequently resolved by the rollover above. One completed real
+session at the previous cutoff left sustained proof BLOCKED_BY_ELAPSED_REAL_TIME
+and MODEL_VALUE NOT_ESTIMABLE / ALPHA_PROVEN NO.
 See the [immutable closure observation](../archive/Operational-Reliability-Cohort-Closure-2026-09-11.md)
 for exact source, deployment, performance, failures and validation receipts.
 

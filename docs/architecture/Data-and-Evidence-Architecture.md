@@ -79,6 +79,15 @@ Experimental consumption uses an explicit allowed Model-use identity and
 expiry/revocation. It grants no formal qualification and never chooses the
 latest available model.
 
+New explicit `deterministic_ridge` algorithm version `2.0` uses fitted Artifact
+schema v2: round-trippable binary64 means, positive scales and coefficients,
+stable scaling for tiny nonzero features, and the same binary64 transform at
+fit and inference. Prediction output retains its declared 12-decimal precision.
+Every fit is loaded and checked for finite training predictions before publication.
+Version `1.0` retains its original bytes and Decimal inference; an old fit whose
+quantized scale becomes zero now refuses publication. Old ModelVersions are not
+retrained, relabeled or automatically replaced by v2.
+
 ## Transaction and Artifact consistency
 
 Each owner uses its narrow UoW for business writes, Receipt, Audit and applicable
