@@ -8,7 +8,7 @@ use exactly one raw Feature value. None consumes evaluation labels.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, localcontext
+from decimal import Decimal, DecimalException, Context, localcontext, ROUND_HALF_EVEN
 import json
 from uuid import UUID
 
@@ -26,7 +26,8 @@ from market_regime_alpha.research_qualification.ports.model_inputs import (
 from market_regime_alpha.shared.hashing import canonical_json_sha256, sha256_bytes
 
 
-KINDS = frozenset({"ZERO", "TRAINING_MEAN", "FEATURE", "INVERSE_FEATURE"})
+_COEFFICIENTS = {"ZERO": 0, "TRAINING_MEAN": 0, "FEATURE": 1, "INVERSE_FEATURE": -1}
+KINDS = frozenset(_COEFFICIENTS)
 _QUANTUM = Decimal("0.000000000001")
 
 
@@ -74,7 +75,7 @@ def load_baseline_artifact(content: bytes) -> BaselineArtifact:
                                   Decimal(p["intercept"]), Decimal(p["coefficient"]), p["seed"], p["sample_roster_sha256"])
         if (type(result.seed) is not int or result.seed < 0
                 or not result.intercept.is_finite() or not result.coefficient.is_finite()
-                or result.coefficient != {"ZERO": 0, "TRAINING_MEAN": 0, "FEATURE": 1, "INVERSE_FEATURE": -1}[result.kind]
+                or result.coefficient != _COEFFICIENTS[result.kind]
                 or (result.kind != "TRAINING_MEAN" and result.intercept != 0)):
             raise ValueError("baseline Artifact parameters violate its formula")
         from market_regime_alpha.shared.identity import ContentHash
@@ -99,16 +100,17 @@ class ResearchBaselineTrainer:
                 or len({r.model_training_sample_id for r in rows}) != len(rows)
                 or any(len(r.features) != 1 or not all(x.is_finite() for x in (*r.features, r.target)) for r in rows)):
             raise ValueError("baseline requires a finite, unique, single-Feature FIT roster")
-        with localcontext() as ctx:
-            ctx.prec = 38
+        with localcontext(Context(prec=38, rounding=ROUND_HALF_EVEN)):
             intercept = (sum((r.target for r in rows), Decimal(0)) / len(rows)).quantize(_QUANTUM) if kind == "TRAINING_MEAN" else Decimal(0)
         artifact = BaselineArtifact(training.feature_definition_ids, kind, intercept,
-                                    Decimal({"ZERO": 0, "TRAINING_MEAN": 0, "FEATURE": 1, "INVERSE_FEATURE": -1}[kind]),
+                                    Decimal(_COEFFICIENTS[kind]),
                                     training.seed, canonical_json_sha256(tuple(
                                         {"model_training_sample_id": r.model_training_sample_id, "features": r.features, "target": r.target} for r in rows)))
         content = _bytes(artifact.payload())
         if load_baseline_artifact(content) != artifact:
             raise ValueError("baseline Artifact round trip differs")
+        for row in rows:
+            _point(artifact, row.features[0])
         return FittedModelPayload(content, sha256_bytes(content), 2)
 
 
@@ -126,9 +128,18 @@ class ResearchBaselinePredictor:
             raise ValueError("baseline Artifact differs from frozen ModelVersion")
         if any(len(row.features) != 1 or not row.features[0].is_finite() for row in batch.rows):
             raise ValueError("baseline prediction requires one finite Feature")
-        with localcontext() as ctx:
-            ctx.prec = 38
-            return tuple(ModelPrediction(row.row_id, (artifact.intercept + artifact.coefficient * row.features[0]).quantize(_QUANTUM)) for row in batch.rows)
+        return tuple(ModelPrediction(row.row_id, _point(artifact, row.features[0])) for row in batch.rows)
+
+
+def _point(artifact: BaselineArtifact, feature: Decimal) -> Decimal:
+    try:
+        with localcontext(Context(prec=38, rounding=ROUND_HALF_EVEN)):
+            value = (artifact.intercept + artifact.coefficient * feature).quantize(_QUANTUM)
+            if not value.is_finite():
+                raise ValueError("baseline prediction must be finite")
+            return value
+    except DecimalException as exc:
+        raise ValueError("baseline prediction exceeds supported output precision") from exc
 
 
 class ResearchBaselineBacktestAdapter:

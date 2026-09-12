@@ -12,16 +12,15 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import platform
-import subprocess
 from typing import Any
 from uuid import UUID, uuid5, NAMESPACE_URL
-from zipfile import ZipFile
 
 from market_regime_alpha.bootstrap import TargetApplication
 from market_regime_alpha.decision_support.domain.strategy import StrategyPlan, ContextFailureAction
 from market_regime_alpha.infrastructure.postgres.queries.historical_study import read_study_dependencies
 from market_regime_alpha.interfaces.backtest import encode_backtest_specification
 from market_regime_alpha.interfaces.historical_study_definitions import prediction_protocol
+from market_regime_alpha.interfaces.historical_study_build import verify_historical_build
 from market_regime_alpha.research_qualification.domain import backtest as B, research_models as M, research_vocabulary as V
 from market_regime_alpha.research_qualification.domain.daily_protocol import daily_feature_definition, daily_target_definition
 from market_regime_alpha.research_qualification.domain.historical_study import HistoricalStudyPlan
@@ -50,31 +49,14 @@ def _exact(path: Path, content: bytes) -> None:
 
 
 def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: Path,
-                  lockfile: Path, code_sha: str, output: Path, actor_id: str) -> dict[str, Any]:
+                  lockfile: Path, source_checkout: Path, code_sha: str, output: Path, actor_id: str) -> dict[str, Any]:
     """Owner declarations and a frozen portable specification, resumable by ID."""
-    if len(code_sha) != 40 or any(c not in "0123456789abcdef" for c in code_sha):
-        raise ValueError("study requires a full implementation Git SHA")
     if not output.is_dir():
         raise ValueError("study output must be an existing persistent directory")
+    build = verify_historical_build(wheel=wheel, lockfile=lockfile, source_checkout=source_checkout, code_sha=code_sha)
     evidence = read_study_dependencies(app._pool, plan)
-    # Expensive reads and wheel validation precede every declaration transaction.
-    wheel_content = wheel.read_bytes()
-    wheel_hash = sha256(wheel_content).hexdigest()
-    with ZipFile(wheel) as archive:
-        package_root = Path(__file__).resolve().parents[1]
-        for name in archive.namelist():
-            if name.startswith("market_regime_alpha/") and name.endswith((".py", ".sql")):
-                local = package_root / name.removeprefix("market_regime_alpha/")
-                if not local.is_file() or local.read_bytes() != archive.read(name):
-                    raise ValueError("study wheel differs from the executing source installation")
-        ridge_hash = sha256(archive.read("market_regime_alpha/research_qualification/application/deterministic_linear.py")).hexdigest()
-        baseline_hash = sha256(archive.read("market_regime_alpha/infrastructure/models/research_baselines.py")).hexdigest()
-        metadata_names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
-        if len(metadata_names) != 1:
-            raise ValueError("study wheel metadata is ambiguous")
-        version = next(line.removeprefix("Version: ") for line in archive.read(metadata_names[0]).decode().splitlines() if line.startswith("Version: "))
     frozen = {"schema": "mra-historical-study-freeze-v1", "plan": asdict(plan), "code_sha": code_sha,
-              "wheel_sha256": wheel_hash, "lockfile_sha256": sha256(lockfile.read_bytes()).hexdigest(),
+              "wheel_sha256": build.wheel_sha256, "lockfile_sha256": build.lockfile_sha256,
               "sessions": evidence["sessions"], "target_coverage": evidence["target_coverage"],
               "preprocessing": "FIT_ONLY_ZSCORE_FOR_RIDGE_IDENTITY_FOR_CONTROLS", "ridge_alpha": "1",
               "target": "NEXT_SESSION_OPEN_TO_CLOSE", "primary_selection_metric": "COMMON_VALIDATION_MAE",
@@ -91,7 +73,7 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     def artifact(raw: bytes, label: str, media: str = "application/json") -> ArtifactBinding:
         result = app.artifacts.publish(raw, media_type=media, context=ctx(label))
         return ArtifactBinding(result.artifact_id, result.content_sha256, result.size_bytes)
-    code = artifact(wheel_content, "wheel", "application/zip")
+    code = artifact(build.content, "wheel", "application/zip")
     config = artifact(content, "study-config")
     target = replace(daily_target_definition(uid("target"), code, config), target_code=plan.study_code + "_daily_target")
     feature = replace(daily_feature_definition(uid("feature"), code, config), feature_code=plan.study_code + "_session_move")
@@ -155,8 +137,8 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             (2, V.PartitionPurpose.VALIDATION, validation,
                 tuple((day, B.BacktestSessionRole.PURGE) for day in plan.purge_dates) + tuple((day, B.BacktestSessionRole.EMBARGO) for day in plan.embargo_dates)
                 + tuple((day, B.BacktestSessionRole.EVALUATION) for day in plan.validation_dates))))
-    environment = M.ModelExecutionEnvironment(platform.python_implementation().lower(), platform.python_version(), "uv", subprocess.check_output(["uv", "--version"], text=True).split()[1],
-        ContentHash(str(frozen["lockfile_sha256"])), (M.ModelDependencyVersion(1, "market_regime_alpha", version, wheel_hash),))
+    environment = M.ModelExecutionEnvironment(platform.python_implementation().lower(), platform.python_version(), "uv", build.package_manager_version,
+        ContentHash(str(frozen["lockfile_sha256"])), (M.ModelDependencyVersion(1, "market_regime_alpha", build.version, build.wheel_sha256),))
     arms: list[B.BacktestArmSpecification] = []
     training: list[B.BacktestModelTrainingRequirement] = []
     for ordinal, name in enumerate(plan.candidates, 1):
@@ -170,7 +152,7 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             parameters = ((M.ModelScalarParameter(1, "ridge_alpha", M.ModelScalarType.DECIMAL, decimal_value=D(1)),) if ridge else
                 (M.ModelScalarParameter(1, "baseline_kind", M.ModelScalarType.TEXT, text_value=name.upper()),))
             recipe = B.BacktestModelTrainingRecipe("deterministic_ridge" if ridge else "research_baseline", "2.0.0" if name == "ridge_v2" else "1.0.0",
-                ridge_hash if ridge else baseline_hash, environment, parameters)
+                build.ridge_sha256 if ridge else build.baseline_sha256, environment, parameters)
             training.append(B.BacktestModelTrainingRequirement(uid("training:" + name), len(training) + 1, uid("arm:" + name),
                 folds[0].exploratory_backtest_fold_id, folds[1].exploratory_backtest_fold_id, model_binding,
                 binding(fit.metrics[0].evaluation_protocol_metric_id, fit.metrics[0].content_sha256), 1, recipe))

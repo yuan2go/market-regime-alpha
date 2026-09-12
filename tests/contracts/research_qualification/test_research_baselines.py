@@ -1,5 +1,5 @@
 from dataclasses import replace
-from decimal import Decimal as D
+from decimal import Decimal as D, localcontext, ROUND_UP
 from uuid import UUID
 
 import pytest
@@ -62,3 +62,19 @@ def test_controls_reject_ambiguous_artifact_and_bad_training():
             ResearchBaselineTrainer().fit(replace(t, rows=rows))
     with pytest.raises(ValueError, match="baseline_kind"):
         ResearchBaselineTrainer().fit(replace(t, hyperparameters=()))
+
+
+def test_baseline_rounding_is_independent_of_caller_decimal_context():
+    original = training("TRAINING_MEAN")
+    t = replace(original, rows=tuple(replace(row, target=value) for row, value in zip(original.rows, (D(0), D(0), D(1)), strict=True)))
+    expected = ResearchBaselineTrainer().fit(t)
+    with localcontext() as context:
+        context.rounding = ROUND_UP
+        assert ResearchBaselineTrainer().fit(t) == expected
+
+
+def test_fit_rejects_values_that_cannot_round_trip_through_prediction_precision():
+    t = training("FEATURE")
+    t = replace(t, rows=(replace(t.rows[0], features=(D("1e100"),)), *t.rows[1:]))
+    with pytest.raises(ValueError, match="output precision"):
+        ResearchBaselineTrainer().fit(t)

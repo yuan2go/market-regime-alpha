@@ -2,7 +2,8 @@
 
 An independently authorized historical study starts with `mra research
 prepare-historical --plan "$FROZEN_STUDY_PLAN" --wheel "$PINNED_WHEEL"
---lockfile "$PINNED_LOCKFILE" --code-sha "$IMPLEMENTATION_SHA"
+--lockfile "$PINNED_LOCKFILE" --source-checkout "$SOURCE_CHECKOUT"
+--code-sha "$IMPLEMENTATION_SHA"
 --output "$PERSISTENT_STUDY_DIRECTORY" --expected-database-name
 "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
 --actor-id "$RESEARCH_OPERATOR"`. The plan pins Archive/seal/template hashes,

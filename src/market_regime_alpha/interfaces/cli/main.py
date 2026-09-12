@@ -350,6 +350,9 @@ def main(
 
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     if arguments.area == "research":
+        if arguments.research_command == "prepare-historical":
+            from market_regime_alpha.interfaces.cli.research import execute_research
+            return execute_research(settings, arguments)
         from market_regime_alpha.interfaces.cli.daily import dispatch_daily
         return dispatch_daily(arguments, settings)
     if arguments.area == "db":
@@ -448,9 +451,6 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     run_id=arguments.run_id,
                 )
                 return {"recovered_attempt_ids": recovered}
-    if arguments.area == "research":
-        from market_regime_alpha.interfaces.cli.research import execute_research
-        return execute_research(settings, arguments)
     if arguments.area == "backtest":
         with bootstrap_application(settings) as application:
             command = arguments.backtest_command
@@ -580,8 +580,6 @@ def _parser() -> argparse.ArgumentParser:
     areas = parser.add_subparsers(dest="area", required=True)
     from market_regime_alpha.interfaces.cli.daily import add_daily_parser
     add_daily_parser(areas)
-    from market_regime_alpha.interfaces.cli.research import add_research_parser
-    add_research_parser(areas)
 
     evidence = areas.add_parser("evidence")
     evidence_commands = evidence.add_subparsers(dest="evidence_command", required=True)

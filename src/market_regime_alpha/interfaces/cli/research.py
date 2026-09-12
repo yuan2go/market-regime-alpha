@@ -9,11 +9,9 @@ from market_regime_alpha.interfaces.historical_study import prepare_study
 from market_regime_alpha.research_qualification.domain.historical_study import HistoricalStudyPlan
 
 
-def add_research_parser(areas) -> None:
-    research = areas.add_parser("research")
-    commands = research.add_subparsers(dest="research_command", required=True)
+def add_historical_parser(commands) -> None:
     prepare = commands.add_parser("prepare-historical")
-    for name in ("plan", "wheel", "lockfile", "output"):
+    for name in ("plan", "wheel", "lockfile", "source-checkout", "output"):
         prepare.add_argument("--" + name, required=True, type=Path)
     prepare.add_argument("--code-sha", required=True)
     prepare.add_argument("--expected-database-name", required=True)
@@ -29,4 +27,4 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
     plan = HistoricalStudyPlan.from_bytes(arguments.plan.read_bytes())
     with bootstrap_application(settings) as app:
         return prepare_study(app, plan, wheel=arguments.wheel, lockfile=arguments.lockfile,
-            code_sha=arguments.code_sha, output=arguments.output, actor_id=arguments.actor_id)
+            source_checkout=arguments.source_checkout, code_sha=arguments.code_sha, output=arguments.output, actor_id=arguments.actor_id)
