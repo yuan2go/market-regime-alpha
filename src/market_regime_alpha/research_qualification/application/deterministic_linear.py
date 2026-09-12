@@ -85,6 +85,8 @@ def fit_deterministic_ridge(
                 magnitude = np.max(np.abs(centered), axis=0)
                 divisor = np.where(magnitude == 0.0, 1.0, magnitude)
                 scales = divisor * np.sqrt(np.mean((centered / divisor) ** 2, axis=0))
+                if np.any((magnitude != 0.0) & (scales == 0.0)):
+                    raise ValueError("nonconstant feature scale underflows binary64")
             scales = np.where(scales == 0.0, 1.0, scales)
             normalized = (matrix - means) / scales
             design = np.column_stack((np.ones(len(ordered), dtype=np.float64), normalized))

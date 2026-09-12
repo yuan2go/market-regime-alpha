@@ -145,3 +145,12 @@ def test_v1_refuses_to_publish_an_unloadable_fit() -> None:
             tuple(LinearTrainingRow(UUID(int=i), (Decimal(i) * Decimal("1e-14"),), Decimal(i)) for i in (1, 3)),
             feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18, format_version=1,
         )
+
+
+def test_nonconstant_subnormal_scale_cannot_be_published_as_a_constant():
+    # Its nonzero population std is below binary64's minimum. Unit scaling
+    # would silently change the model to a constant prediction of 1.
+    with pytest.raises(ValueError, match="nonconstant feature scale underflows"):
+        fit_deterministic_ridge(tuple(
+            LinearTrainingRow(UUID(int=i+1), (Decimal("5e-324") if i == 5 else Decimal(0),), Decimal(6 if i == 5 else 0))
+            for i in range(6)), feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18)

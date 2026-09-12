@@ -17,6 +17,9 @@ from market_regime_alpha.research_qualification.ports.model_execution import (
 )
 
 
+RIDGE_FORMAT_VERSIONS = {"1.0": 1, "1.0.0": 1, "2.0": 2, "2.0.0": 2}
+
+
 class DeterministicRidgeTrainer:
     def supports(self, algorithm_code: str, algorithm_version: str) -> bool:
         return _supports_algorithm(algorithm_code, algorithm_version)
@@ -36,7 +39,7 @@ class DeterministicRidgeTrainer:
             feature_definition_ids=training.feature_definition_ids,
             alpha=alpha[0].decimal_value,
             seed=training.seed,
-            format_version=2 if training.algorithm_version in {"2.0", "2.0.0"} else 1,
+            format_version=RIDGE_FORMAT_VERSIONS[training.algorithm_version],
         )
         return FittedModelPayload(
             fitted.content,
@@ -66,7 +69,7 @@ class DeterministicRidgePredictor:
         fitted = load_deterministic_ridge_artifact(model.fitted_content)
         if (
             str(model.fitted_content_sha256) != fitted.content_sha256
-            or fitted.format_version != (2 if model.algorithm_version in {"2.0", "2.0.0"} else 1)
+            or fitted.format_version != RIDGE_FORMAT_VERSIONS[model.algorithm_version]
             or fitted.feature_definition_ids != model.feature_definition_ids
             or fitted.alpha != alpha[0].decimal_value
             or fitted.seed != model.seed
@@ -88,7 +91,7 @@ def _require_algorithm(code: str, version: str) -> None:
 
 
 def _supports_algorithm(code: str, version: str) -> bool:
-    return code == "deterministic_ridge" and version in {"1.0", "1.0.0", "2.0", "2.0.0"}
+    return code == "deterministic_ridge" and version in RIDGE_FORMAT_VERSIONS
 
 
 __all__ = ["DeterministicRidgePredictor", "DeterministicRidgeTrainer"]
