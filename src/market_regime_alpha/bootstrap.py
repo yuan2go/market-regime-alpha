@@ -23,6 +23,7 @@ from market_regime_alpha.infrastructure.artifacts.evidence import FilesystemEvid
 from market_regime_alpha.infrastructure.postgres.evidence_backup import PostgresEvidenceBackup
 from market_regime_alpha.infrastructure.postgres.queries.evidence import PostgresEvidenceSnapshotPort
 from market_regime_alpha.runtime.application.evidence import EvidenceApplication
+from market_regime_alpha.infrastructure.models.research_baselines import ResearchBaselineTrainer, ResearchBaselinePredictor, ResearchBaselineBacktestAdapter
 from market_regime_alpha.infrastructure.models import (
     DeterministicRidgeBacktestModelAdapter,
     DeterministicRidgePredictor,
@@ -470,10 +471,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         outcome_prices=PostgresOutcomeQueryProvider(pool),
     )
     model_trainers = ExplicitModelTrainerComposition(
-        (DeterministicRidgeTrainer(),)
+        (DeterministicRidgeTrainer(), ResearchBaselineTrainer())
     )
     model_predictors = ExplicitModelPredictorComposition(
-        (DeterministicRidgePredictor(),)
+        (DeterministicRidgePredictor(), ResearchBaselinePredictor())
     )
     model_training_inputs = PostgresModelTrainingInputProvider(pool, byte_store)
     research_model_application = ResearchModelApplication(
@@ -571,7 +572,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_experiments=experiment_commands,
         research_evaluations=evaluation_commands,
         research_models=research_model_application,
-        model_adapters=(DeterministicRidgeBacktestModelAdapter(),),
+        model_adapters=(DeterministicRidgeBacktestModelAdapter(), ResearchBaselineBacktestAdapter()),
         backtests=backtest_application,
         runtime=runtime_application,
     )

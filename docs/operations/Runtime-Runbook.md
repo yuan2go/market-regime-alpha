@@ -1,5 +1,19 @@
 # Runtime operations
 
+An independently authorized historical study starts with `mra research
+prepare-historical --plan "$FROZEN_STUDY_PLAN" --wheel "$PINNED_WHEEL"
+--lockfile "$PINNED_LOCKFILE" --code-sha "$IMPLEMENTATION_SHA"
+--output "$PERSISTENT_STUDY_DIRECTORY" --expected-database-name
+"$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+--actor-id "$RESEARCH_OPERATOR"`. The plan pins Archive/seal/template hashes,
+the complete fixed security roster and explicit FIT/purge/embargo/validation
+Calendar dates. The executing package must match the wheel. It writes immutable
+study metadata and predeclares a canonical Backtest; it does not execute one.
+Use the returned `mra backtest run --run-id` and `mra backtest resume --run-id`
+entries for execution and recovery, then the existing report and replay commands.
+Use persistent research storage, with a separate disposable test database.
+This finite baseline entry is exploratory; it does not confer PIT or formal OOS.
+
 > **Status:** CURRENT_ARCHITECTURE
 > **Code Evidence:** `src/market_regime_alpha/interfaces/cli`, `src/market_regime_alpha/interfaces/prospective_service.py`, `src/market_regime_alpha/interfaces/prospective_operation_guard.py`, `src/market_regime_alpha/interfaces/daily_service.py`, `docs/operations/templates`
 

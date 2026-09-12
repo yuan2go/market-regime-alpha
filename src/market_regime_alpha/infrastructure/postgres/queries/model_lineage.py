@@ -37,8 +37,14 @@ def model_training_lineage(pool: Any, store: Any, model_version_id: UUID) -> dic
     content = store.read_bytes(fitted["content_sha256"], expected_size=fitted["size_bytes"])
     if sha256(content).hexdigest() != fitted["frozen_sha256"]:
         raise ArtifactIntegrityError("MODEL_FITTED_ARTIFACT_BYTES_DIFFER")
-    decoded = load_deterministic_ridge_artifact(content)
     registered = PostgresModelTrainingInputProvider(pool, store).load_registered_reproducible(version.model_training_run_id)
+    if registered.training.algorithm_code == "research_baseline" and registered.training.algorithm_version == "1.0.0":
+        from market_regime_alpha.infrastructure.models.research_baselines import load_baseline_artifact
+        decoded: Any = load_baseline_artifact(content)
+    elif registered.training.algorithm_code == "deterministic_ridge":
+        decoded = load_deterministic_ridge_artifact(content)
+    else:
+        raise ArtifactIntegrityError("MODEL_LINEAGE_UNSUPPORTED_ARTIFACT_ALGORITHM")
     if registered.training.model_id != version.model_id or tuple(decoded.feature_definition_ids) != tuple(registered.training.feature_definition_ids):
         raise ArtifactIntegrityError("MODEL_FITTED_FEATURE_ROSTER_DIFFERS")
     return {"model": asdict(model), "model_version": asdict(version), "training_run": asdict(training),
