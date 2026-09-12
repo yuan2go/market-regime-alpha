@@ -106,6 +106,12 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
                 code_sha=arguments.code_sha, output=arguments.output, actor_id=arguments.actor_id)
         content=arguments.plan.read_bytes()
         root=json.loads(content)
+        if isinstance(root,dict) and root.get("schema")=="mra-historical-rolling-v2":
+            from market_regime_alpha.research_qualification.domain.historical_rolling import HistoricalRollingPlan
+            rolling = HistoricalRollingPlan.from_bytes(content)
+            return prepare_study(app,rolling.baseline,wheel=arguments.wheel,lockfile=arguments.lockfile,
+                source_checkout=arguments.source_checkout,code_sha=arguments.code_sha,output=arguments.output,actor_id=arguments.actor_id,matrix=rolling,
+                reuse_contracts_from=arguments.reuse_contracts_from)
         if isinstance(root,dict) and root.get("schema")=="mra-historical-matrix-v1":
             from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalMatrixPlan
             matrix=HistoricalMatrixPlan.from_bytes(content)

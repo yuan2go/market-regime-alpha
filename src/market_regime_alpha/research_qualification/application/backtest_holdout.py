@@ -15,6 +15,7 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
 from market_regime_alpha.research_qualification.domain.backtest_holdout import BacktestHoldoutOpening, BacktestHoldoutReservation
 from market_regime_alpha.research_qualification.domain.historical_study import BASELINE_CANDIDATES
 from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalMatrixPlan
+from market_regime_alpha.research_qualification.domain.historical_rolling import HistoricalRollingPlan, ROBUSTNESS_CONTROLS
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.research_qualification.ports.backtest_holdout import BacktestHoldoutReadPort
 from market_regime_alpha.research_qualification.ports.backtest_reports import BacktestReportArtifactPublisher
@@ -63,9 +64,16 @@ class BacktestHoldoutApplication:
         protocol = self._read_artifact(reservation.protocol_artifact)
         development = self._specifications.load_specification(reservation.development_run_id)
         config = self._read_artifact(development.config_artifact)
-        if not isinstance(protocol, dict) or protocol.get("schema") != "mra-historical-campaign-boundary-v1":
+        if not isinstance(protocol, dict) or protocol.get("schema") not in {"mra-historical-campaign-boundary-v1", "mra-robustness-campaign-boundary-v2"}:
             raise ValueError("holdout requires the frozen finite historical campaign boundary")
-        matrix = HistoricalMatrixPlan.from_bytes(json.dumps(protocol["development_plan"]).encode())
+        rolling = protocol["schema"] == "mra-robustness-campaign-boundary-v2"
+        matrix = (HistoricalRollingPlan.from_bytes(json.dumps(protocol["development_plan"]).encode()) if rolling else
+            HistoricalMatrixPlan.from_bytes(json.dumps(protocol["development_plan"]).encode()))
+        controls = ROBUSTNESS_CONTROLS if rolling else BASELINE_CANDIDATES
+        if rolling and (protocol.get("primary_point_metric") != "COMMON_VALIDATION_MAE" or protocol.get("primary_ordering_diagnostic") != "DAILY_RANK_IC"
+                or protocol.get("historical_access_class") != "EXPLORATORY_TIME_ISOLATION_NOT_BLIND_PIT"
+                or config.get("schema") != "mra-historical-rolling-freeze-v2"):
+            raise ValueError("rolling holdout requires independently frozen point/rank objectives and exploratory access limits")
         expanded = tuple(candidate.name for candidate in matrix.ridge_candidates)
         if tuple(code for code in expanded if code in reservation.selection_arm_codes) != reservation.selection_arm_codes:
             raise ValueError("holdout selection must use the ordered frozen expanded Ridge candidates")
@@ -78,8 +86,8 @@ class BacktestHoldoutApplication:
                 or protocol["selection"]["metric"] != "ALL_ARM_COMMON_VALIDATION_MAE"
                 or protocol["selection"]["tie_break"] != "PREDECLARED_ARM_ORDINAL"
                 or protocol["selection"]["holdout_reselection_allowed"] is not False
-                or tuple(protocol["selection"]["holdout_controls"]) != BASELINE_CANDIDATES
-                or protocol["selection"]["holdout_candidate_count"] != 8):
+                or tuple(protocol["selection"]["holdout_controls"]) != controls
+                or protocol["selection"]["holdout_candidate_count"] != len(controls) + 1):
             raise RuntimeStateConflictError("holdout reservation differs from its physical frozen protocol and development plan")
 
     def select(self, reservation_id: UUID) -> dict[str, Any]:
@@ -130,12 +138,14 @@ class BacktestHoldoutApplication:
 
     def _validate_heldout(self, reservation: BacktestHoldoutReservation, development: BacktestSpecification,
                          heldout: BacktestSpecification, selected_code: str) -> None:
+        protocol = self.frozen_protocol(reservation.reservation_id)
+        controls = ROBUSTNESS_CONTROLS if protocol["schema"] == "mra-robustness-campaign-boundary-v2" else BASELINE_CANDIDATES
         if (heldout.exploratory_backtest_run_id != reservation.future_run_id or heldout.run_code != reservation.future_study_code
                 or heldout.market_archive != development.market_archive or heldout.market_archive_seal != development.market_archive_seal
                 or heldout.target != development.target or heldout.feature_definitions != development.feature_definitions
                 or heldout.random_seed != development.random_seed
                 or tuple(m.instrument_id for m in heldout.sample_members) != tuple(m.instrument_id for m in development.sample_members)
-                or tuple(arm.arm_code for arm in heldout.arms) != (*BASELINE_CANDIDATES, selected_code)
+                or tuple(arm.arm_code for arm in heldout.arms) != (*controls, selected_code)
                 or heldout.defaults != development.defaults
                 or heldout.eligibility_policy != development.eligibility_policy):
             raise RuntimeStateConflictError("holdout changed the reserved population, Target, Features, policies or selected candidate")

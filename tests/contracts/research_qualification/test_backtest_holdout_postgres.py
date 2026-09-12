@@ -24,14 +24,15 @@ from market_regime_alpha.research_qualification.domain.backtest_execution import
 from market_regime_alpha.research_qualification.domain.backtest_holdout import BacktestHoldoutOpening, BacktestHoldoutReservation
 from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalMatrixPlan, HistoricalTimeSplit, HistoricalRidgeCandidate
 from market_regime_alpha.research_qualification.domain.historical_study import BASELINE_CANDIDATES, HistoricalStudyPlan
+from market_regime_alpha.research_qualification.domain.historical_rolling import HistoricalRollingPlan, RollingStudyPlan, ROBUSTNESS_CONTROLS
 from market_regime_alpha.research_qualification.domain.model import ArtifactBinding
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError, RuntimeStateConflictError
 from tests.contracts.research_qualification.archive_campaign_fixture import _context
 from tests.contracts.research_qualification.daily_campaign_fixture import daily_baseline
 
 
-@pytest.mark.parametrize("all_session_facts",[False,True])
-def test_holdout_reservation_opening_recovery_and_cross_identity_label_guards(target_database_url, tmp_path, monkeypatch, all_session_facts):
+@pytest.mark.parametrize("all_session_facts,rolling",[(False,False),(True,False),(True,True)])
+def test_holdout_reservation_opening_recovery_and_cross_identity_label_guards(target_database_url, tmp_path, monkeypatch, all_session_facts, rolling):
     settings = TargetSettings(target_database_url, tmp_path / "artifacts")
     bootstrap_database(settings)
     content = b"explicit synthetic engineering build; never historical research evidence"
@@ -52,12 +53,14 @@ def test_holdout_reservation_opening_recovery_and_cross_identity_label_guards(ta
         template, catalog = daily_baseline(app, archive_exchange="XSHG", mixed_daily_bars=True, all_session_facts=all_session_facts)
         app.backtests.predeclare(template, _context("holdout-template"))
         def prepare(code, split, reuse=None):
-            plan = HistoricalStudyPlan(code, template.exploratory_backtest_run_id, str(template.definition_sha256),
+            plan_type = RollingStudyPlan if rolling else HistoricalStudyPlan
+            plan = plan_type(code, template.exploratory_backtest_run_id, str(template.definition_sha256),
                 template.market_archive.authority_id, str(template.market_archive.content_sha256),
                 template.market_archive_seal.authority_id, str(template.market_archive_seal.content_sha256),
                 split.fit_dates, split.purge_dates, split.embargo_dates, split.validation_dates,
-                tuple(sorted((i.value for i in catalog["instruments"]), key=str)))
-            matrix = HistoricalMatrixPlan(plan, (), (HistoricalRidgeCandidate("ridge_intraday", ("intraday",), Decimal(1)),))
+                tuple(sorted((i.value for i in catalog["instruments"]), key=str)), candidates=ROBUSTNESS_CONTROLS if rolling else BASELINE_CANDIDATES)
+            hypotheses = (HistoricalRidgeCandidate("ridge_intraday", ("intraday",), Decimal(1)),)
+            matrix = HistoricalRollingPlan(plan, (), hypotheses, 5) if rolling else HistoricalMatrixPlan(plan, (), hypotheses)
             output = tmp_path / code
             output.mkdir()
             result = study.prepare_study(app, plan, matrix=matrix, wheel=Path("fixture.whl"), lockfile=Path("fixture.lock"),
@@ -66,16 +69,23 @@ def test_holdout_reservation_opening_recovery_and_cross_identity_label_guards(ta
 
         development_split = HistoricalTimeSplit((date(2026,1,5),), (date(2026,1,6),), (date(2026,1,7),), (date(2026,1,8),))
         heldout_split = HistoricalTimeSplit((date(2026,1,9),), (date(2026,1,12),), (date(2026,1,13),), (date(2026,1,14),))
+        if rolling:
+            development_split = HistoricalTimeSplit((date(2026,1,2),date(2026,1,5)), (date(2026,1,6),), (date(2026,1,7),), (date(2026,1,8),))
+            heldout_split = HistoricalTimeSplit((date(2026,1,9),date(2026,1,12)), (date(2026,1,13),), (date(2026,1,14),), (date(2026,1,15),))
         development, matrix = prepare("holdout_development", development_split)
         plan = json.loads(json.dumps(asdict(matrix), default=str))
-        plan.update(schema="mra-historical-matrix-v1")
-        plan["baseline"]["schema"] = "mra-historical-study-v1"
+        plan.update(schema="mra-historical-rolling-v2" if rolling else "mra-historical-matrix-v1")
+        plan["baseline"]["schema"] = "mra-rolling-study-v2" if rolling else "mra-historical-study-v1"
         protocol = {"schema":"mra-historical-campaign-boundary-v1", "development_plan":plan,
             "holdout_time_split":json.loads(json.dumps(asdict(heldout_split),default=str)),
             "future_holdout_study_code":"holdout_selected",
             "selection":{"eligible_candidates":["ridge_intraday"],"metric":"ALL_ARM_COMMON_VALIDATION_MAE",
                 "tie_break":"PREDECLARED_ARM_ORDINAL","holdout_reselection_allowed":False,
                 "holdout_controls":list(BASELINE_CANDIDATES),"holdout_candidate_count":8}}
+        if rolling:
+            protocol.update(schema="mra-robustness-campaign-boundary-v2", primary_point_metric="COMMON_VALIDATION_MAE",
+                primary_ordering_diagnostic="DAILY_RANK_IC", historical_access_class="EXPLORATORY_TIME_ISOLATION_NOT_BLIND_PIT")
+            protocol["selection"].update(holdout_controls=list(ROBUSTNESS_CONTROLS),holdout_candidate_count=5)
         artifact = app.artifacts.publish(study._json(protocol), media_type="application/json", context=_context("holdout-protocol"))
         future_id = uuid5(uuid5(NAMESPACE_URL,"mra:historical-study:holdout_selected"),"backtest")
         request = BacktestHoldoutReservation(uuid4(), development.exploratory_backtest_run_id, str(development.content_sha256),
@@ -101,21 +111,28 @@ def test_holdout_reservation_opening_recovery_and_cross_identity_label_guards(ta
         rule = clone.arms[0].exploratory_backtest_arm_id
         validation = clone.folds[1].exploratory_backtest_fold_id
         actions = tuple(a for a in expected if a.arm_id==rule and a.fold_id==validation)
-        for action in actions:
-            if action.kind in {BacktestActionKind.MATERIALIZE_DATASET, BacktestActionKind.GENERATE_DECISION_SUPPORT}:
-                app.backtest_execution._actions.execute(cloned, action, BacktestNextOperation.EXECUTE)
-        outcome = next(a for a in actions if a.kind is BacktestActionKind.SETTLE_OUTCOME)
-        from market_regime_alpha.infrastructure.postgres.queries import outcome_inputs
-        def forbidden_label_read(*args, **kwargs):
-            raise AssertionError("reserved label sources were read")
-        with monkeypatch.context() as patch:
-            patch.setattr(outcome_inputs, "_load_sources", forbidden_label_read)
+        if rolling:
+            # A different Run may compute its unprotected FIT inputs, but the
+            # Outcome owner must refuse its first reserved validation label.
             with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="EXPLORATORY_HOLDOUT_ACCESS_BLOCKED"):
-                app.backtest_execution._actions.execute(cloned, outcome, BacktestNextOperation.EXECUTE)
+                app.backtest_execution.run(cloned)
+        else:
+            for action in actions:
+                if action.kind in {BacktestActionKind.MATERIALIZE_DATASET, BacktestActionKind.GENERATE_DECISION_SUPPORT}:
+                    app.backtest_execution._actions.execute(cloned, action, BacktestNextOperation.EXECUTE)
+            outcome = next(a for a in actions if a.kind is BacktestActionKind.SETTLE_OUTCOME)
+            from market_regime_alpha.infrastructure.postgres.queries import outcome_inputs
+            def forbidden_label_read(*args, **kwargs):
+                raise AssertionError("reserved label sources were read")
+            with monkeypatch.context() as patch:
+                patch.setattr(outcome_inputs, "_load_sources", forbidden_label_read)
+                with pytest.raises(psycopg.errors.ObjectNotInPrerequisiteState, match="EXPLORATORY_HOLDOUT_ACCESS_BLOCKED"):
+                    app.backtest_execution._actions.execute(cloned, outcome, BacktestNextOperation.EXECUTE)
         with app._pool.connection(read_only=True) as c:
             assert c.execute("SELECT count(*) FROM mra.market_target_outcome outcome JOIN mra.decision_run decision USING(decision_run_id) "
                 "JOIN mra.exploratory_backtest_dataset dataset ON dataset.dataset_id=decision.dataset_id "
-                "WHERE dataset.exploratory_backtest_run_id=%s",(clone.exploratory_backtest_run_id,)).fetchone()==(0,)
+                "WHERE dataset.exploratory_backtest_run_id=%s AND (%s OR dataset.exploratory_backtest_fold_id=%s)",
+                (clone.exploratory_backtest_run_id,not rolling,validation)).fetchone()==(0,)
 
         started = app.backtest_execution.run(freeze_backtest_specification(development), budget=BacktestExecutionBudget(2,300))
         assert started.execution_state.value=="RUNNING"
@@ -181,7 +198,7 @@ def test_holdout_reservation_opening_recovery_and_cross_identity_label_guards(ta
         assert resume(heldout).execution_state.value=="COMPLETED"
         assert app.backtest_replay.verify(future_id).matched
         inspection = app.backtest_holdouts.queries.inspect(request.reservation_id)
-        assert inspection["state"]=="ACCESSED" and len(inspection["evaluation_accesses"])==16
+        assert inspection["state"]=="ACCESSED" and len(inspection["evaluation_accesses"])==(10 if rolling else 16)
         evaluation_id = inspection["evaluation_accesses"][0][0]
         with app._pool.connection(read_only=True) as c:
             commitment, due = c.execute("SELECT member.commitment_id,member.outcome_due_at FROM mra.evaluation_run evaluation "

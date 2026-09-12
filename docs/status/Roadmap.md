@@ -24,14 +24,14 @@ versioned research declarations. Old protocols, SQL and results retain their byt
 - [x] Reproduce and fix request-level Provider failure attribution over complete
   inventory windows; reject Calendar dependencies without the selected Archive
   binding before historical preparation writes any declaration or Artifact.
-- [ ] Profile one small representative real-history canonical scope at baseline,
+- [x] Profile one small representative real-history canonical scope at baseline,
   including source/physical reads, features, Dataset, FIT, training, prediction,
   Outcome, Evaluation, graph, reconciliation and report. Retain original timings.
-- [ ] Reduce measured repeated preparation/graph/verification cost with exact,
-  bounded invocation-local reuse and live commit checks. Compare identical input
+- [x] Reduce measured repeated preparation/graph/verification cost with exact,
+  bounded process-local reuse and live commit checks. Compare identical input
   predictions/labels/populations against baseline (exact Decimal output at its
   declared precision; binary64 internals at declared serializer precision).
-- [ ] Version the finite rolling plan and holdout contract for five controls:
+- [x] Version the finite rolling plan and holdout contract for five main candidates:
   ZERO, FIT mean, FIT median, original Ridge v2 and the exact previous momentum
   Ridge recipe. Prefer one 126-session FIT specification; at most one additional
   predeclared 252-session variant, ten configurations total. No alpha search.

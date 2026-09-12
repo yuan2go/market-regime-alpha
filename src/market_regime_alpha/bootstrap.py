@@ -7,6 +7,8 @@ from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs im
 from market_regime_alpha.infrastructure.postgres.queries.historical_features import PostgresHistoricalFeatureInputReadPort
 from market_regime_alpha.infrastructure.postgres.queries.historical_inventory import PostgresHistoricalInventory
 from market_regime_alpha.infrastructure.historical_features import HistoricalBacktestFeatureAdapter
+from market_regime_alpha.infrastructure.research_intercept import ResearchInterceptFeatureAdapter
+from market_regime_alpha.infrastructure.postgres.queries.research_intercept import PostgresResearchInterceptInputs
 from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
 from market_regime_alpha.infrastructure.postgres.queries.calendar_continuity import PostgresCalendarContinuityReads
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
@@ -571,6 +573,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             IntradayMoveBacktestFeatureAdapter(PostgresExploratoryFeatureInputReadPort(pool)),
             DailyMoveBacktestFeatureAdapter(PostgresDailyFeatureInputReadPort(pool, byte_store)),
             HistoricalBacktestFeatureAdapter(PostgresHistoricalFeatureInputReadPort(pool, byte_store)),
+            ResearchInterceptFeatureAdapter(PostgresResearchInterceptInputs(pool, byte_store)),
         ),
         worker_id="generic-backtest-worker",
         candidates=candidate_application,
@@ -612,7 +615,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresBacktestReportSourcePort(pool),
         backtest_replay,
     )
-    historical_comparison = HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool), backtest_reports,
+    historical_comparison = HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool, byte_store), backtest_reports,
         PostgresBacktestDiagnosticsSourcePort(pool), backtest_specifications)
     backtest_holdouts = BacktestHoldoutApplication(PostgresBacktestUnitOfWorkProvider(pool), holdout_queries,
         backtest_specifications, historical_comparison, artifact_application, byte_store, id_factory=uuid4)

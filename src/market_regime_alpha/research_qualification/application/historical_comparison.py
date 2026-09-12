@@ -21,6 +21,8 @@ class HistoricalComparisonInputs(Protocol):
 
     def contiguous_folds(self, run_id: UUID) -> frozenset[UUID]: ...
 
+    def fitted_diagnostics(self, run_id: UUID) -> tuple[dict, ...]: ...
+
 
 class HistoricalSpecificationReader(Protocol):
     def load_specification(self, exploratory_backtest_run_id: UUID) -> BacktestSpecification: ...
@@ -89,5 +91,12 @@ class HistoricalComparisonApplication:
                 "NOT_ACCOUNT_NAV_OR_TRADABLE_ALPHA",
             ),
         }
+        if spec.walk_forward_policy.policy_version == 2 and spec.walk_forward_policy.policy_code == "explicit_calendar_split":
+            from market_regime_alpha.research_qualification.domain.robustness_statistics import robustness_statistics
+            payload["schema"] = "mra-historical-comparison-v2"
+            payload["robustness"] = robustness_statistics(points,
+                arms=tuple((a.exploratory_backtest_arm_id,a.arm_code) for a in spec.arms),sessions=sessions,
+                instruments=tuple(m.instrument_id for m in spec.sample_members),contiguous_folds=self._inputs.contiguous_folds(run_id))
+            payload["fitted_diagnostics"] = self._inputs.fitted_diagnostics(run_id)
         payload["projection_sha256"] = canonical_json_sha256(payload)
         return payload

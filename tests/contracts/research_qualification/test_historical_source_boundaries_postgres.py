@@ -107,7 +107,7 @@ def test_inventory_maps_failed_requests_across_full_window_without_scope_spread(
         assert raw["state"] == "CONFLICT" and raw["bar_revision_ids"] and raw["gaps"]
 
 
-@pytest.mark.parametrize("calendar_binding", ["FOREIGN_ONLY", "SHARED", "MISSING_FINAL"])
+@pytest.mark.parametrize("calendar_binding", ["FOREIGN_ONLY", "SHARED", "MISSING_FINAL", "MISSING_PARTITION_EMBARGO"])
 def test_study_requires_selected_archive_calendar_before_declarations(target_database_url, tmp_path, monkeypatch, calendar_binding):
     settings = TargetSettings(target_database_url, tmp_path / "artifacts")
     bootstrap_database(settings)
@@ -122,6 +122,8 @@ def test_study_requires_selected_archive_calendar_before_declarations(target_dat
         capture = app.market.capture(CaptureRequest(product, "selected-calendar", "fixture://selected-calendar", "a"*64), _BytesProvider(), _context("selected-calendar"))
         dates = [r[0] for r in rows]
         included = [] if calendar_binding == "FOREIGN_ONLY" else (dates if calendar_binding == "SHARED" else dates[:4])
+        if calendar_binding == "MISSING_PARTITION_EMBARGO":
+            included = dates[:5]
         if included:
             app.market.normalize(capture.capture.capture_id, _Normalizer(lambda c: NormalizationBatch(c.capture_id, c.provider_product_id,
                 trading_sessions=tuple(_session(day, c.capture_id, "XSHG") for day in included))), _context("selected-calendar-normalize"))

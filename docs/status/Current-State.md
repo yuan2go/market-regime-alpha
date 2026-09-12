@@ -22,7 +22,31 @@ checks also pass. No migration or original research result changed.
 
 The persistent old comparison and protocol hashes have been reloaded. A new,
 separately identified real-data engineering run measures the baseline canonical
-cost. Long-window and new holdout research are not yet completed; follow the
+cost: 127 actions completed in 846.48 seconds including final reconciliation
+under cProfile (shared-host engineering measurement, not capacity qualification).
+The bounded parser reuses at most eight exact manifests of at most two MiB each
+and their immutable parsed values; altered bytes or frozen Dataset/Feature
+identities miss the cache. Physical reads and owner integrity checks remain live.
+The executor retains one immutable action graph and observes each completed
+action before full reconciliation at dependency and drain boundaries.
+The same 127-action scope completes after an observed query cancellation and
+original-plan resume (68 committed actions retained; 59 remaining actions).
+All 464 validation inputs match exactly in prediction, label, state and exclusion
+reason, and the common population is unchanged. Timed execution, failure,
+recovery and report/comparison total 702.90 seconds versus 874.79 seconds before;
+shared-host PostgreSQL interference prevents treating this one pair as a stable
+capacity estimate. Preparation and diagnostic progress are outside this timing
+comparison; their available records remain separate. The original failure
+remains in the external command index.
+
+The distinct `mra-historical-rolling-v2` preparation contract supports overlapping
+FIT windows and non-repeated validation, with Calendar-verified stride. It keeps
+ZERO, FIT mean, FIT median and original Ridge controls plus up to six explicit
+Ridge hypotheses. Constants use an archived listing-fact intercept instead of
+a price feature. Median uses research-baseline algorithm/artifact v2; v1 still
+decodes unchanged and refuses the new kind. The v2 holdout boundary reuses the
+original append-only reservation/opening owners and protected-label guards.
+Long-window and new holdout research are not yet completed; follow the
 active [Roadmap](Roadmap.md) rather than the old delivery gates below.
 
 ## Historical research campaign delivered

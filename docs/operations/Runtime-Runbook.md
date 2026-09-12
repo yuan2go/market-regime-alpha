@@ -45,7 +45,43 @@ Empty populations retain zero rows and exact Calendar lineage in the versioned
 empty Dataset manifest; they are never filled with synthetic observations.
 This finite baseline entry is exploratory; it does not confer PIT or formal OOS.
 
-The same `prepare-historical` entry accepts `mra-historical-matrix-v1`: a nested
+The same `prepare-historical` entry also accepts `mra-historical-rolling-v2`.
+Its nested `mra-rolling-study-v2` baseline fixes the ordered controls `zero`,
+`training_mean`, `training_median`, `ridge_v2`; `ridge_candidates` adds explicit
+ordered feature subsets and decimal-string alpha values within ten total arms.
+`mode` is `ROLLING` (fixed FIT length) or `EXPANDING` (exact retained prefix).
+`step_sessions` counts actual archived Calendar positions between validation
+starts. Each split declares FIT, purge, embargo and validation dates; validation
+must not repeat, and later FIT cutoffs must advance beyond earlier validation.
+The explicit `update_policy` is
+`MATURE_EARLIER_VALIDATION_ALLOWED_PROTECTED_LABELS_REQUIRE_OWNER_PERMISSION_V1`.
+This permits mature earlier rolling observations, not reserved holdout access.
+FIT is bounded to 2–252 sessions, validation to 1–250, and the plan to twelve folds.
+These are engineering bounds; the retained holdout owner separately limits its
+FIT to 250 and validation to 60 sessions. Use the narrower common range for a
+campaign with a holdout. No existing reservation is changed or released.
+
+For this version, `mra-robustness-campaign-boundary-v2` freezes independent
+`COMMON_VALIDATION_MAE` and `DAILY_RANK_IC` objectives and declares
+`EXPLORATORY_TIME_ISOLATION_NOT_BLIND_PIT`. The existing holdout reserve/select/
+open and original-plan run/resume commands remain the execution path. Constants
+use the exact archived listing-fact intercept, so unavailable price features do
+not remove their otherwise eligible predictions. Their Rank IC remains
+NOT_ESTIMABLE. Listing ambiguity, unbound Calendar or unreadable source bytes
+still fail closed; the intercept is not historical membership evidence.
+
+Parser reuse is local and bounded: eight exact byte strings, each at most two
+MiB, plus their immutable parsed values. Keys also bind the complete Dataset and
+Feature definitions (including code/config/formula/cutoff). Larger inputs are
+parsed without retention; changed bytes/contracts miss and the least recently
+used entry is evicted. No physical integrity, identity, permission, fence,
+freshness or observed business state is cached. Owner reload and physical
+verification precede parsing. The executor similarly retains only one immutable
+graph; observations are reloaded, with complete reconciliation at dependency
+boundaries and normal drain. Retained failures and unknown outcomes remain
+owner facts.
+
+The original `prepare-historical` entry accepts `mra-historical-matrix-v1`: a nested
 baseline plan, explicit `additional_splits`, `step_sessions` from the archived
 Calendar, and `ridge_candidates` containing a unique name, ordered factor names
 and a decimal-string `ridge_alpha` (`0.1`, `1`, or `10`). It retains all seven

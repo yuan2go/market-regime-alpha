@@ -7,11 +7,16 @@ from psycopg.rows import dict_row
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.research_qualification.domain.historical_comparison import HistoricalEvaluationPoint
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+from market_regime_alpha.research_qualification.ports.artifacts import ResearchArtifactByteStore
 
 
 class PostgresHistoricalComparisonInputs:
-    def __init__(self, pool: TargetPostgresPool) -> None:
-        self._pool = pool
+    def __init__(self, pool: TargetPostgresPool, byte_store: ResearchArtifactByteStore) -> None:
+        self._pool, self._bytes = pool, byte_store
+
+    def fitted_diagnostics(self, run_id: UUID) -> tuple[dict, ...]:
+        from market_regime_alpha.infrastructure.postgres.queries.historical_fit_diagnostics import historical_fit_diagnostics
+        return historical_fit_diagnostics(self._pool,self._bytes,run_id)
 
     def contiguous_folds(self, run_id: UUID) -> frozenset[UUID]:
         """Only the real Calendar can attest adjacent trading-day blocks."""

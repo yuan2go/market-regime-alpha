@@ -21,7 +21,9 @@ _ARCHIVE_CALENDAR_BINDING = """EXISTS (
 )"""
 
 
-def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan, additional_splits: tuple[HistoricalTimeSplit, ...] = (), step_sessions: int | None = None) -> dict[str, Any]:
+def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan, additional_splits: tuple[HistoricalTimeSplit, ...] = (), step_sessions: int | None = None, *, stride_anchor: str = "FIT_START") -> dict[str, Any]:
+    if stride_anchor not in {"FIT_START", "VALIDATION_START"}:
+        raise ValueError("unknown Calendar stride anchor")
     with pool.connection(read_only=True) as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         with connection.cursor(row_factory=dict_row) as cursor:
@@ -49,7 +51,9 @@ def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan,
                     raise ValueError(f"each study split must cover every real Calendar session in its interval: exchange={archive['exchange_code']}, expected={window}, actual={actual}")
             if additional_splits:
                 index={r["session_date"]:i for i,r in enumerate(sessions)}
-                if step_sessions is None or any(index[current.fit_dates[0]]-index[previous.fit_dates[0]]!=step_sessions
+                def anchor(window):
+                    return window.fit_dates[0] if stride_anchor == "FIT_START" else window.validation_dates[0]
+                if step_sessions is None or any(index[anchor(current)]-index[anchor(previous)]!=step_sessions
                     for previous,current in zip(windows,windows[1:])):
                     raise ValueError("rolling stride must match actual archived Calendar session positions")
             if any(r["known_at"] > seal["knowledge_cutoff"] for r in sessions):
@@ -60,5 +64,21 @@ def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan,
                 WHERE exchange=%s AND session_date>%s ORDER BY session_date LIMIT 1""", (*calendar_scope, archive["exchange_code"], dates[-1])).fetchone()
             if next_session is None or not next_session.pop("archive_bound") or next_session["known_at"] > seal["knowledge_cutoff"]:
                 raise ValueError("study Calendar must cover the final next-session label")
+            # Canonical validation Partitions extend past the label horizon by
+            # their declared embargo. Validate that source here, before any
+            # frozen file or owner declaration, not at the last Evaluation.
+            following = cursor.execute("SELECT session_id,session_date,known_at," + _ARCHIVE_CALENDAR_BINDING + """ AS archive_bound FROM mra.trading_session session
+                WHERE exchange=%s AND session_date>%s ORDER BY session_date LIMIT %s""",
+                (*calendar_scope,archive["exchange_code"],dates[-1],1+max(len(w.embargo_dates) for w in windows))).fetchall()
+            full_calendar = [*sessions,*following]
+            positions = {row["session_date"]:i for i,row in enumerate(full_calendar)}
+            ends = tuple(positions[w.validation_dates[-1]]+1+len(w.embargo_dates) for w in windows)
+            required_end = max(ends)
+            if required_end >= len(full_calendar) or any(not row["archive_bound"] or row["known_at"]>seal["knowledge_cutoff"]
+                    for row in full_calendar[len(sessions):required_end+1]):
+                raise ValueError("study Calendar must cover the exact label horizon and Partition embargo")
+            partition_coverage = tuple({"validation_end":w.validation_dates[-1],"protected_end":full_calendar[end]["session_date"]}
+                for w,end in zip(windows,ends,strict=True))
         strategy = _load_strategy(connection, root["strategy_version_id"], lock=False)
-    return {"template": root, "archive": archive, "seal": seal, "sessions": sessions, "target_coverage": next_session, "strategy": strategy}
+    return {"template": root, "archive": archive, "seal": seal, "sessions": sessions, "target_coverage": next_session, "strategy": strategy,
+        "partition_coverage":partition_coverage}
