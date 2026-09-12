@@ -23,6 +23,17 @@ from market_regime_alpha.shared.time import DecisionTime, require_utc
 class BacktestFeatureLineageKind(StrEnum):
     BAR_REVISION = "BAR_REVISION"
     SOURCE_GAP = "SOURCE_GAP"
+    TRADING_SESSION = "TRADING_SESSION"
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestFeatureDependency:
+    kind: BacktestFeatureLineageKind
+    identity: UUID
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, BacktestFeatureLineageKind) or not isinstance(self.identity, UUID):
+            raise TypeError("Feature dependencies require exact typed Market identities")
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +44,7 @@ class BacktestDatasetFeatureCell:
     lineage_kind: BacktestFeatureLineageKind
     lineage_id: UUID
     value: Decimal | None
+    additional_dependencies: tuple[BacktestFeatureDependency, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, FeatureCellStatus):
@@ -48,6 +60,10 @@ class BacktestDatasetFeatureCell:
             self.lineage_kind is BacktestFeatureLineageKind.BAR_REVISION
         ):
             raise ValueError("Feature state and typed lineage are incompatible")
+        if self.value is not None and not self.value.is_finite():
+            raise ValueError("Feature values must be finite")
+        if len(set(self.additional_dependencies)) != len(self.additional_dependencies):
+            raise ValueError("Feature dependencies must be unique")
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,33 +182,26 @@ def materialize_backtest_dataset(
                 dataset_id,
                 f"feature:{cell.feature_definition_id}",
             )
-            lineage_source_id = uuid5(
-                dataset_id,
-                f"lineage:{cell.lineage_kind.value}:{cell.lineage_id}",
-            )
-            lineage: dict[str, object] = {
-                "dataset_source_id": str(lineage_source_id),
-                "role": (
-                    "MARKET_BAR_REVISION"
-                    if cell.lineage_kind is BacktestFeatureLineageKind.BAR_REVISION
-                    else "MARKET_SOURCE_GAP"
-                ),
+            lineage_ids = set()
+            fields = {
+                BacktestFeatureLineageKind.BAR_REVISION: ("MARKET_BAR_REVISION", "market_bar_revision_id"),
+                BacktestFeatureLineageKind.SOURCE_GAP: ("MARKET_SOURCE_GAP", "market_source_gap_id"),
+                BacktestFeatureLineageKind.TRADING_SESSION: ("MARKET_TRADING_SESSION", "market_trading_session_id"),
             }
-            lineage[
-                "market_bar_revision_id"
-                if cell.lineage_kind is BacktestFeatureLineageKind.BAR_REVISION
-                else "market_source_gap_id"
-            ] = str(cell.lineage_id)
-            previous = sources_by_id.setdefault(lineage_source_id, lineage)
-            if previous != lineage:
-                raise ValueError("Feature lineage identity is inconsistent")
+            for dependency in (BacktestFeatureDependency(cell.lineage_kind, cell.lineage_id), *cell.additional_dependencies):
+                lineage_source_id = uuid5(dataset_id, f"lineage:{dependency.kind.value}:{dependency.identity}")
+                role, identity_field = fields[dependency.kind]
+                lineage: dict[str, object] = {"dataset_source_id": str(lineage_source_id), "role": role,
+                    identity_field: str(dependency.identity)}
+                previous = sources_by_id.setdefault(lineage_source_id, lineage)
+                if previous != lineage:
+                    raise ValueError("Feature lineage identity is inconsistent")
+                lineage_ids.add(str(lineage_source_id))
             cells.append(
                 {
                     "feature_definition_id": str(cell.feature_definition_id),
                     "reason_code": cell.reason_code,
-                    "source_ids": sorted(
-                        (str(feature_source_id), str(lineage_source_id))
-                    ),
+                    "source_ids": sorted({str(feature_source_id), *lineage_ids}),
                     "status": cell.status.value,
                     "value": (
                         None if cell.value is None else format(cell.value, "f")

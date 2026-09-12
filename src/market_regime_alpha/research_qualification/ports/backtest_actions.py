@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, time
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 from uuid import UUID
 
 from market_regime_alpha.research_qualification.domain.backtest import (
@@ -165,6 +165,13 @@ class BacktestFeatureMaterializer(Protocol):
         self,
         request: BacktestFeatureRequest,
     ) -> BacktestDatasetFeatureCell: ...
+
+
+@runtime_checkable
+class BatchBacktestFeatureMaterializer(Protocol):
+    """Prepare one exact Dataset population outside the business transaction."""
+
+    def materialize_batch(self, requests: tuple[BacktestFeatureRequest, ...]) -> tuple[BacktestDatasetFeatureCell, ...]: ...
 
 
 class BacktestModelAdapter(Protocol):

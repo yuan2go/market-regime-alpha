@@ -121,6 +121,20 @@ class FeatureDefinition:
             or self.missingness_policy is not FeatureMissingnessPolicy.EXPLICIT_STATUS
         ):
             raise ValueError('daily Feature requires its exact one-session ratio and explicit missingness contract')
+        if self.algorithm_code.startswith("historical_"):
+            from market_regime_alpha.research_qualification.domain.historical_features import FACTORS_BY_CODE, PEER_FACTOR_CODES
+            factor = FACTORS_BY_CODE.get(self.algorithm_code)
+            required = {FeatureSourceRequirement.MARKET_BAR_REVISION, FeatureSourceRequirement.TRADING_SESSION}
+            if self.algorithm_code in PEER_FACTOR_CODES:
+                required.update((FeatureSourceRequirement.UNIVERSE_MEMBER, FeatureSourceRequirement.ELIGIBILITY_ASSESSMENT))
+            if (factor is None or self.algorithm_version != "1" or str(self.algorithm_sha256) != factor.algorithm_sha256
+                or self.value_type is not FeatureValueType.DECIMAL or self.value_unit != "RATIO"
+                or (self.frequency_value, self.window_value, self.lookback_value) != (1, factor.lookback + 1, factor.lookback)
+                or any(unit is not FeatureIntervalUnit.TRADING_SESSION for unit in (self.frequency_unit, self.window_unit, self.lookback_unit))
+                or set(self.source_requirements) != required
+                or self.availability_rule is not FeatureAvailabilityRule.DECISION_VISIBLE_AT_OR_BEFORE
+                or self.missingness_policy is not FeatureMissingnessPolicy.EXPLICIT_STATUS):
+                raise ValueError("historical Feature requires the exact versioned formula, window, sources and missingness contract")
         algorithm_hash = (
             self.algorithm_sha256
             if isinstance(self.algorithm_sha256, ContentHash)

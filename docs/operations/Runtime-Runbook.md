@@ -67,6 +67,51 @@ a distribution-reinvestment or executable return contract; see the publisher's
 [adjustment specification](https://www.baostock.com/helpdocs/pdf/BaoStock%E5%A4%8D%E6%9D%83%E5%9B%A0%E5%AD%90%E7%AE%80%E4%BB%8B.pdf).
 Actual capture/known times and unknown availability/finality are preserved.
 
+After the request roster reaches its intended terminal disposition, use
+`mra archive seal --archive-id "$ARCHIVE_ID" --expected-database-name
+"$RESEARCH_DATABASE_NAME" --actor-id "$RESEARCH_OPERATOR" --operation-key
+"$STABLE_SEAL_KEY" --disposition COMPLETE`. The original Archive owner checks
+the disposition; use `PARTIAL_WITH_GAPS` or `PARTIAL_WITH_RESOURCE_LIMIT` only
+when that owner-recorded condition applies. Sealing does not assert bar quality.
+
+`mra research history-inventory --archive-id "$ARCHIVE_ID" --seal-id "$SEAL_ID"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` verifies the frozen roster and Capture bytes, then
+reports Calendar coverage, each security × session × price basis denominator,
+missing/conflicting identities, listing facts, status summaries and revision
+roster hashes. Save stdout in persistent research storage. Missing security
+master captures do not remove frozen names from the denominator. The v2 inventory
+hashes sorted UUID bytes for immutable revision rosters; Capture and code/config
+hashes retain source/normalization identity. A counted bar is not necessarily a
+usable Feature, mature label or formal PIT observation.
+
+The historical Feature family has ten version-1 formulas, all unitless ratios:
+
+| Factor | Formula and complete-session dependency |
+|---|---|
+| intraday | Raw close / raw open − 1, current session |
+| return_1 / return_5 / return_20 | Backward-adjusted close / close N sessions earlier − 1; all N+1 Calendar sessions must have prices |
+| volatility_20 | Sample standard deviation of 20 adjusted daily returns, divisor 19; 21 closes |
+| volume_5_20 / amount_5_20 | Mean last 5 / mean last 20 − 1; raw shares / CNY amounts respectively |
+| peer_relative_5 / peer_relative_20 | Return minus equal-weight return of exact Dataset members with complete windows, at least two |
+| cross_section_5 | (Average tie rank of return_5 − 1) / (complete member count − 1), at least two |
+
+Peer arithmetic uses unrounded returns; final cells use Decimal precision 60,
+half-even rounding to 12 decimal places. The peer benchmark is not CSI300 or a
+tradable portfolio. Peer exclusions remain visible in the full Dataset. Windows
+use Market Calendar; participating exchanges must have aligned dates/closes.
+There is no weekday inference, raw-price fallback, zero-denominator replacement,
+forward fill or label input. Warmup/missing data are MISSING, explicit conflicts
+are CONFLICT, and failed Provider requests are UNKNOWN. Failed-request lineage
+retains slice/Capture/request hashes and real knowledge times, with no invented
+event time; it may explain unavailable cells but cannot support numeric values.
+
+The shared pure kernel accepts the last 21 sessions or a bounded incremental
+append. Backtest prepares exact population batches outside the owner transaction,
+verifies bytes after releasing the read connection, and uses no cross-invocation
+Authority cache. Dataset commit reloads full Calendar/bar/gap lineage. Existing
+daily and intraday formulas retain their original adapters and identities.
+
 Run the returned `archive-manifest.json` through `mra archive resume --manifest
 "$FROZEN_ARCHIVE_MANIFEST" --expected-database-name "$RESEARCH_DATABASE_NAME"
 --actor-id "$RESEARCH_OPERATOR" --operation-key "$STABLE_OPERATION_KEY"

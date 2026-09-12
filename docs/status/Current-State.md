@@ -23,8 +23,26 @@ On the 64 validation observations, Ridge v1/v2 MAE is approximately 0.01764 vers
 approximately -0.195. Constants retain NOT_ESTIMABLE rank diagnostics. This is a
 tiny descriptive result with STATIC_UNIVERSE / SURVIVORSHIP_LIMITED / retrospective
 knowledge limitations; it establishes neither stable model increment nor formal
-PIT/OOS or economic validity. Historical expansion, feature ablation and protected
-temporal validation remain active work in the [Roadmap](Roadmap.md).
+PIT/OOS or economic validity. Feature ablation and protected temporal validation
+remain active work in the [Roadmap](Roadmap.md).
+
+The independent expansion acquired all 97 frozen BaoStock requests under
+implementation `c8dac4b14789cd828c2f302bc9ded41fa24b1aa0` and sealed archive
+`44d0020a-04d7-5954-b9db-f64de8840eaf` with seal
+`77f31d6a-f2db-4393-91ae-bde57b51412b`. It covers 969 actual sessions in 2022–2025,
+the same fixed 32 securities, and 60,398 raw/adjusted DAILY bar revisions. Each
+price basis has 30,199 available observations out of 31,008 expected static-roster
+slots; the remaining 809 retain exact gap reasons. The full source inventory
+contains 3,208 MISSING and 14 INVALID_OHLC gaps across fact kinds. Listing and
+status observations retain actual September 2026 knowledge times. These facts
+establish exploratory historical coverage, not PIT or model value.
+
+The first eight captures took 32.42 seconds; fresh-process continuation of the
+remaining 89 took 544.38 seconds. Full physical inventory initially took 12.88
+seconds / 698 MB maximum resident memory. Bounded fact-roster hashing and compact
+status summaries reduced the same scope to 3.05 seconds / 187 MB. The first
+inventory and its measurements remain retained; the operating database was not
+written.
 
 
 ## Continuous research reliability engineering

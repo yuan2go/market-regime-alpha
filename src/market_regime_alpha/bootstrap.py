@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from market_regime_alpha.infrastructure.postgres.queries.historical_acquisition import PostgresHistoricalAcquisitionSources
 from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
+from market_regime_alpha.infrastructure.postgres.queries.historical_features import PostgresHistoricalFeatureInputReadPort
+from market_regime_alpha.infrastructure.postgres.queries.historical_inventory import PostgresHistoricalInventory
+from market_regime_alpha.infrastructure.historical_features import HistoricalBacktestFeatureAdapter
 from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
 from market_regime_alpha.infrastructure.postgres.queries.calendar_continuity import PostgresCalendarContinuityReads
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
@@ -356,6 +359,7 @@ class TargetApplication:
     prospective_archives: ProspectiveArchiveRuntimeApplication
     archive_inspection: ArchiveInspectionPort
     historical_acquisition_sources: PostgresHistoricalAcquisitionSources
+    historical_inventory: PostgresHistoricalInventory
     archive_acquisition_readiness: PostgresArchiveAcquisitionReadinessReads
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
@@ -559,6 +563,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         feature_materializers=(
             IntradayMoveBacktestFeatureAdapter(PostgresExploratoryFeatureInputReadPort(pool)),
             DailyMoveBacktestFeatureAdapter(PostgresDailyFeatureInputReadPort(pool, byte_store)),
+            HistoricalBacktestFeatureAdapter(PostgresHistoricalFeatureInputReadPort(pool, byte_store)),
         ),
         worker_id="generic-backtest-worker",
         candidates=candidate_application,
@@ -641,6 +646,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         ),
         archive_inspection=PostgresArchiveInspectionPort(pool),
         historical_acquisition_sources=PostgresHistoricalAcquisitionSources(pool),
+        historical_inventory=PostgresHistoricalInventory(pool, byte_store),
         archive_acquisition_readiness=PostgresArchiveAcquisitionReadinessReads(pool, byte_store),
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),

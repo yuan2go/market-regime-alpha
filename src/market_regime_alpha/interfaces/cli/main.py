@@ -350,7 +350,7 @@ def main(
 
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     if arguments.area == "research":
-        if arguments.research_command in {"prepare-historical", "prepare-history-data"}:
+        if arguments.research_command in {"prepare-historical", "prepare-history-data", "history-inventory"}:
             from market_regime_alpha.interfaces.cli.research import execute_research
             return execute_research(settings, arguments)
         from market_regime_alpha.interfaces.cli.daily import dispatch_daily
@@ -553,6 +553,13 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     arguments.archive_id,
                     arguments.archive_command,
                 )
+            if arguments.archive_command == "seal":
+                from market_regime_alpha.market.domain import ArchiveSealDisposition
+                return application.market_archives.seal_retrospective(
+                    market_archive_id=arguments.archive_id,
+                    disposition=ArchiveSealDisposition(arguments.disposition),
+                    context=CommandContext(actor_id=arguments.actor_id, actor_type=ActorType.OPERATOR,
+                        idempotency_key=arguments.operation_key, reason_code="HISTORICAL_ARCHIVE_SEAL"))
             assert manifest is not None
             if arguments.archive_command == "start":
                 return start_archive(
@@ -765,6 +772,12 @@ def _parser() -> argparse.ArgumentParser:
         inspection = archive_commands.add_parser(command)
         inspection.add_argument("--archive-id", required=True, type=UUID)
         inspection.add_argument("--expected-database-name", required=True)
+    seal = archive_commands.add_parser("seal")
+    seal.add_argument("--archive-id", required=True, type=UUID)
+    seal.add_argument("--expected-database-name", required=True)
+    seal.add_argument("--actor-id", required=True)
+    seal.add_argument("--operation-key", required=True)
+    seal.add_argument("--disposition", required=True, choices=("COMPLETE", "PARTIAL_WITH_GAPS", "PARTIAL_WITH_RESOURCE_LIMIT"))
     return parser
 
 
