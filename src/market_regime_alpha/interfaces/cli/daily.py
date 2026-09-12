@@ -24,6 +24,8 @@ from market_regime_alpha.runtime.errors import RuntimeNotFoundError
 def add_daily_parser(areas: Any) -> None:
     research = areas.add_parser("research")
     commands = research.add_subparsers(dest="research_command", required=True)
+    from market_regime_alpha.interfaces.cli.research import add_historical_parser
+    add_historical_parser(commands)
     validity = commands.add_parser("validity")
     validity_commands = validity.add_subparsers(dest="validity_command", required=True)
     validity_daily = validity_commands.add_parser("daily")

@@ -138,3 +138,37 @@ def test_resume_rejects_an_unknown_or_empty_selected_slice_roster() -> None:
             operation_key="selected",
             slice_ids=(uuid4(),),
         )
+
+
+def test_historical_budget_retains_pending_roster_and_does_not_login_after_completion():
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from market_regime_alpha.market.domain.historical_acquisition import HistoricalAcquisitionBudget
+    from tests.contracts.market.test_baostock_archive_provider import _Sdk, _SdkResult
+    manifest = ArchiveOperatorManifest.from_json(json.dumps(_manifest()))
+    first = manifest.slices[0]
+    second = replace(first, plan=replace(first.plan,market_archive_slice_id=uuid4(),ordinal=2,scope_key="second"))
+    manifest = replace(manifest,start_request=replace(manifest.start_request,slices=(first.plan,second.plan)),slices=(first,second))
+    pending = {first.plan.market_archive_slice_id,second.plan.market_archive_slice_id}
+    observed=[]
+    def execute(request, **kwargs):
+        observed.append(request.market_archive_slice_id)
+        pending.remove(request.market_archive_slice_id)
+        return request.market_archive_slice_id
+    def inspect(_):
+        return SimpleNamespace(slices=tuple(SimpleNamespace(market_archive_slice_id=i.plan.market_archive_slice_id,
+             status="OVERDUE" if i.plan.market_archive_slice_id in pending else "CAPTURED") for i in manifest.slices))
+    app=SimpleNamespace(archive_inspection=SimpleNamespace(inspect=inspect),market_revision_lineage=None,
+        archive_trading_sessions=None,archive_operations=SimpleNamespace(execute_slice=execute))
+    sdk=_Sdk(_SdkResult(["field"],[]))
+    for _ in range(3):
+        resume_archive(app,manifest,sdk=sdk,actor_id="test",operation_key="same",budget=HistoricalAcquisitionBudget(maximum_slices=1))
+    assert observed == [first.plan.market_archive_slice_id,second.plan.market_archive_slice_id]
+    assert not pending and sdk.calls == []
+
+
+@pytest.mark.parametrize("kwargs",[{"maximum_slices":0},{"maximum_slices":True},{"maximum_seconds":float("nan")},{"minimum_interval_seconds":0}])
+def test_historical_budget_rejects_invalid_limits(kwargs):
+    from market_regime_alpha.market.domain.historical_acquisition import HistoricalAcquisitionBudget
+    with pytest.raises(ValueError):
+        HistoricalAcquisitionBudget(**kwargs)

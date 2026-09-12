@@ -31,6 +31,7 @@ class _Capture:
 @dataclass
 class _CaptureResult:
     capture: _Capture
+    replayed: bool = False
 
 
 class _Market:

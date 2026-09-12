@@ -527,3 +527,15 @@ def test_resource_limit_is_terminal_append_only_evidence_and_seals_partial(archi
     )
     assert seal.gap_count == 2
     assert seal.disposition == "PARTIAL_WITH_RESOURCE_LIMIT"
+
+
+def test_mixed_inventory_round_trips_only_in_retrospective_owner(archive_stack):
+    from market_regime_alpha.market.domain.archive import ArchiveSupplementalPriceBasis
+    commands, market, product, code, config, url = archive_stack
+    request = replace(_request(product,code,config), price_basis=ArchiveSupplementalPriceBasis.MIXED_EXPLICIT)
+    result = commands.start(request,_context("mixed-start"))
+    again = commands.start(request,_context("mixed-start"))
+    assert again.replayed and again.content_sha256 == result.content_sha256
+    with psycopg.connect(url) as connection:
+        assert connection.execute("SELECT price_basis,lane FROM mra.market_archive WHERE market_archive_id=%s",
+            (result.market_archive_id,)).fetchone() == ("MIXED_EXPLICIT","RETROSPECTIVE_BACKFILL")

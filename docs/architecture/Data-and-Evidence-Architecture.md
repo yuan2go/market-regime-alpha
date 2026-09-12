@@ -88,6 +88,27 @@ Version `1.0` retains its original bytes and Decimal inference; an old fit whose
 quantized scale becomes zero now refuses publication. Old ModelVersions are not
 retrained, relabeled or automatically replaced by v2.
 
+Historical feature definitions use the shared pure kernel in
+`research_qualification/domain/historical_features.py`, materialized through
+the existing Dataset adapter. Returns, volatility, activity and static-peer
+comparisons preserve their source price/volume semantics, prewarm requirements
+and unavailable states. Cross-day returns require declared adjusted prices.
+Training estimates preprocessing parameters only from its exact FIT population.
+Input-v2 Backtests may freeze ordered Model subsets of the Dataset feature
+roster; input-v1 retains its exact full-roster contract.
+
+Historical comparison reloads reconciled Evaluation inputs and original Outcome
+revisions, retaining full, own and common populations. Constant ranks remain
+NOT_ESTIMABLE. Paired uncertainty requires enough declared trading-day blocks;
+pooled security observations cannot substitute for trading days. The
+next-session open/close label alone supplies no executable-return or NAV proof.
+
+Recorded professional responses use Capture envelope v2: complete semantic
+contract, original bytes/hash and non-sensitive request identity. Replay checks
+that identity against the original Capture owner. Envelope v1 remains readable
+with unverified request identity. These recorded contracts do not establish
+live Provider access, normalization equivalence, historical availability or PIT.
+
 ## Transaction and Artifact consistency
 
 Each owner uses its narrow UoW for business writes, Receipt, Audit and applicable

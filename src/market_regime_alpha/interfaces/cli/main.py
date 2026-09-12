@@ -350,6 +350,10 @@ def main(
 
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     if arguments.area == "research":
+        if arguments.research_command in {"prepare-historical", "prepare-history-data", "history-inventory", "history-compare", "provider-recording-check", "provider-recording-replay",
+                "holdout-reserve", "holdout-select", "holdout-open", "holdout-inspect"}:
+            from market_regime_alpha.interfaces.cli.research import execute_research
+            return execute_research(settings, arguments)
         from market_regime_alpha.interfaces.cli.daily import dispatch_daily
         return dispatch_daily(arguments, settings)
     if arguments.area == "db":
@@ -471,14 +475,13 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         guard.verify_startup(application)
                         guard.before_action()
                         with backtest_research_admission(backtest_run_id=arguments.run_id, specification_sha256=str(run.specification_sha256)):
-                            execute_backtest = application.backtest_execution.run if command == "run" else application.backtest_execution.resume
-                            return execute_backtest(run)
+                            return _execute_backtest(application, run, arguments)
                 if command == "progress":
                     return application.backtest_execution.progress(run)
                 if command == "run":
-                    return application.backtest_execution.run(run)
+                    return _execute_backtest(application, run, arguments)
                 if command == "resume":
-                    return application.backtest_execution.resume(run)
+                    return _execute_backtest(application, run, arguments)
                 return application.backtest_execution.inspect(run)
             if command == "replay":
                 return application.backtest_replay.verify(arguments.run_id)
@@ -551,6 +554,13 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     arguments.archive_id,
                     arguments.archive_command,
                 )
+            if arguments.archive_command == "seal":
+                from market_regime_alpha.market.domain import ArchiveSealDisposition
+                return application.market_archives.seal_retrospective(
+                    market_archive_id=arguments.archive_id,
+                    disposition=ArchiveSealDisposition(arguments.disposition),
+                    context=CommandContext(actor_id=arguments.actor_id, actor_type=ActorType.OPERATOR,
+                        idempotency_key=arguments.operation_key, reason_code="HISTORICAL_ARCHIVE_SEAL"))
             assert manifest is not None
             if arguments.archive_command == "start":
                 return start_archive(
@@ -560,15 +570,24 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 )
             if arguments.archive_command in {"resume", "retry"}:
                 import baostock as sdk
-
-                return resume_archive(
+                from time import monotonic
+                from market_regime_alpha.market.domain.historical_acquisition import HistoricalAcquisitionBudget
+                budget = (HistoricalAcquisitionBudget(arguments.maximum_slices if arguments.maximum_slices is not None else 8, arguments.maximum_seconds if arguments.maximum_seconds is not None else 1200)
+                          if arguments.maximum_slices is not None or arguments.maximum_seconds is not None or manifest.start_request.price_basis.value == "MIXED_EXPLICIT" else None)
+                started = monotonic()
+                result = resume_archive(
                     application,
                     manifest,
                     sdk=sdk,
                     actor_id=arguments.actor_id,
                     operation_key=arguments.operation_key,
                     slice_ids=(tuple(arguments.slice_id) if arguments.slice_id else None),
+                    budget=budget,
                 )
+                if budget is None:
+                    return result
+                return {"results": result, "elapsed_seconds": monotonic() - started,
+                        "inspection": application.archive_inspection.inspect(manifest.start_request.market_archive_id)}
     raise ValueError("command is not implemented")
 
 
@@ -668,6 +687,8 @@ def _parser() -> argparse.ArgumentParser:
         operation.add_argument("--run-id", required=True, type=UUID)
         if command in {"run", "resume"}:
             operation.add_argument("--operation-config", type=Path)
+            operation.add_argument("--maximum-actions", type=int, help="Stop before another owner action; resume reads the original plan")
+            operation.add_argument("--maximum-seconds", type=float, help="Elapsed invocation budget; does not interrupt an atomic owner command")
     report = backtest_commands.add_parser("report")
     report.add_argument("--run-id", required=True, type=UUID)
     report.add_argument("--format", choices=("json", "markdown"), default="json")
@@ -744,13 +765,33 @@ def _parser() -> argparse.ArgumentParser:
         if command in {"resume", "retry"}:
             mutation.add_argument("--operation-key", required=True)
             mutation.add_argument("--slice-id", action="append", type=UUID)
+            mutation.add_argument("--maximum-slices", type=int)
+            mutation.add_argument("--maximum-seconds", type=float)
     for command in (
         "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
     ):
         inspection = archive_commands.add_parser(command)
         inspection.add_argument("--archive-id", required=True, type=UUID)
         inspection.add_argument("--expected-database-name", required=True)
+    seal = archive_commands.add_parser("seal")
+    seal.add_argument("--archive-id", required=True, type=UUID)
+    seal.add_argument("--expected-database-name", required=True)
+    seal.add_argument("--actor-id", required=True)
+    seal.add_argument("--operation-key", required=True)
+    seal.add_argument("--disposition", required=True, choices=("COMPLETE", "PARTIAL_WITH_GAPS", "PARTIAL_WITH_RESOURCE_LIMIT"))
     return parser
+
+
+def _execute_backtest(application, run, arguments):
+    from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestExecutionBudget
+    maximum_actions = getattr(arguments, "maximum_actions", None)
+    maximum_seconds = getattr(arguments, "maximum_seconds", None)
+    operation = application.backtest_execution.run if arguments.backtest_command == "run" else application.backtest_execution.resume
+    if maximum_actions is None and maximum_seconds is None:
+        return operation(run)
+    budget = BacktestExecutionBudget(100_000 if maximum_actions is None else maximum_actions,
+                                    3600.0 if maximum_seconds is None else maximum_seconds)
+    return {"execution": operation(run, budget=budget), "invocation": application.backtest_execution.last_invocation}
 
 
 def _add_backtest_mutation_arguments(parser: argparse.ArgumentParser) -> None:

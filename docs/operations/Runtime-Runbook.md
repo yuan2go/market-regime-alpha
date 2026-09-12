@@ -3,10 +3,260 @@
 > **Status:** CURRENT_ARCHITECTURE
 > **Code Evidence:** `src/market_regime_alpha/interfaces/cli`, `src/market_regime_alpha/interfaces/prospective_service.py`, `src/market_regime_alpha/interfaces/prospective_operation_guard.py`, `src/market_regime_alpha/interfaces/daily_service.py`, `docs/operations/templates`
 
+An independently authorized historical study starts with `mra research
+prepare-historical --plan "$FROZEN_STUDY_PLAN" --wheel "$PINNED_WHEEL"
+--lockfile "$PINNED_LOCKFILE" --source-checkout "$SOURCE_CHECKOUT"
+--code-sha "$IMPLEMENTATION_SHA"
+--output "$PERSISTENT_STUDY_DIRECTORY" --expected-database-name
+"$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+--actor-id "$RESEARCH_OPERATOR"`. The plan pins Archive/seal/template hashes,
+the complete fixed security roster and explicit FIT/purge/embargo/validation
+Calendar dates. The executing package must match the wheel. It writes immutable
+study metadata and predeclares a canonical Backtest; it does not execute one.
+Use the returned `mra backtest run --run-id` and `mra backtest resume --run-id`
+entries for execution and recovery, then the existing report and replay commands.
+Use persistent research storage, with a separate disposable test database.
+The static roster is a Selection declaration, not dated Market membership.
+It requires the Provider's Instrument capability and the exact sealed Archive
+instrument bindings; classification capability is required only for classified
+universes. Static members keep missing membership evidence and remain barred
+from ordinary/prospective Selection.
+It is marked `STATIC_RESEARCH_ROSTER` / `SURVIVORSHIP_LIMITED_V1`; ordinary
+Eligibility and Dataset paths reject its retrospective scope. The registered
+`static_research_universe_v9` upgrade adds deferred constraints; use the exact
+research database backup and `db upgrade-plan`/`db upgrade-apply` before running
+this package against an existing v8 research database. Never upgrade the operating
+scope under historical research authorization.
+
+Use `backtest run` or `resume` with `--maximum-actions 20 --maximum-seconds 300`
+for bounded invocations. Actions finish their existing atomic owner work before
+draining; the response retains the complete pending action roster, stop reason,
+action time and reconciliation time. Limits are positive (at most 100,000 actions
+and 7,200 seconds); omitted companion limits default to 100,000 / 3,600.
+Omitting both flags preserves the original response and execution behavior.
+Resume reloads the original frozen specification and rechecks owner evidence;
+terminal failures require a new declaration, while completed actions are reused.
+Empty populations retain zero rows and exact Calendar lineage in the versioned
+empty Dataset manifest; they are never filled with synthetic observations.
+This finite baseline entry is exploratory; it does not confer PIT or formal OOS.
+
+The same `prepare-historical` entry accepts `mra-historical-matrix-v1`: a nested
+baseline plan, explicit `additional_splits`, `step_sessions` from the archived
+Calendar, and `ridge_candidates` containing a unique name, ordered factor names
+and a decimal-string `ridge_alpha` (`0.1`, `1`, or `10`). It retains all seven
+controls and allows at most twenty configurations and six separated rolling
+periods. Each period has the same FIT/validation lengths, fresh planned model
+versions and explicit maturity purge/embargo. Overlapping periods are rejected
+before declarations by this bounded builder. They are not implicitly repaired.
+The emitted Backtest input-v2 freezes exact Model feature subsets. Input-v1 and
+historical specifications keep their full ordered feature-roster semantics.
+Existing research databases use `backtest_model_subsets_v11` with an exact
+research backup; this migration changes no historical business rows. Matrix
+validation is exploratory and does not by itself provide a protected holdout.
+
+`mra research history-compare --run-id "$RUN_ID" --expected-database-name
+"$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"`
+projects exact completed fold Evaluation inputs and their original Outcome
+revisions. It reconciles the Backtest, retains full/own/common populations and
+every excluded day/name, and reports errors, daily Rank IC, distributions,
+fold/month slices, paired differences and security error concentration. Constant
+prediction ranks are NOT_ESTIMABLE. The five-session, 1,000-draw paired bootstrap
+requires ten effective blocks and owner-verified contiguous Calendar windows;
+otherwise the report is descriptive. Empty completed populations remain visible.
+`--publish --actor-id "$RESEARCH_OPERATOR"` stores deterministic JSON through the
+original Artifact owner with a content-bound idempotency key. This projection
+does not create new Outcome labels, Evaluation metrics or model qualification.
+
+The registered `backtest_exploratory_holdout_v12` upgrade adds two append-only
+Backtest facts: a reservation and one opening. Use an exact research backup and
+the existing upgrade plan/apply commands. Drain an older installed executor
+before the upgrade; its original frozen specification and completed facts remain
+unchanged. A maximum-seconds budget stops new actions, but the final complete
+owner reconciliation can extend wall time. Include that drain in the run budget.
+
+Before reading heldout results, freeze a `mra-historical-campaign-boundary-v1`
+Artifact containing the entire development matrix, explicit heldout FIT/purge/
+embargo/validation Calendar dates, future study code and finite selection rule.
+The current contract retains seven controls plus one expanded Ridge candidate,
+selected by all-arm-common validation MAE with ties broken by declared ordinal.
+Use this sequence with the same exact database name/OID flags as above:
+
+```bash
+mra research holdout-reserve --development-run-id "$DEVELOPMENT_RUN" --protocol "$FROZEN_BOUNDARY" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID" --actor-id "$RESEARCH_OPERATOR" --idempotency-key "$RESERVATION_KEY"
+mra research holdout-select --reservation-id "$RESERVATION_ID" --output-plan "$SELECTED_PLAN" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+mra research prepare-historical --plan "$SELECTED_PLAN" --reuse-contracts-from "$DEVELOPMENT_RUN" --wheel "$PINNED_WHEEL" --lockfile "$PINNED_LOCKFILE" --source-checkout "$SOURCE_CHECKOUT" --code-sha "$IMPLEMENTATION_SHA" --output "$HELDOUT_DIRECTORY" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID" --actor-id "$RESEARCH_OPERATOR"
+mra research holdout-open --reservation-id "$RESERVATION_ID" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID" --actor-id "$RESEARCH_OPERATOR" --idempotency-key "$OPENING_KEY"
+mra backtest run --run-id "$HELDOUT_RUN" --maximum-actions 100 --maximum-seconds 600
+mra research holdout-inspect --reservation-id "$RESERVATION_ID" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+```
+
+Selection requires every original development Evaluation to be completed.
+Preparation reuses exact Target, ordered Feature definitions, Candidate,
+Eligibility, rule strategy and Evaluation protocols; new FIT data produce new
+ModelVersions with the selected algorithm/parameters. Opening checks every
+effective arm policy and cost, original Calendar bounds, complete Evaluation
+input/metric identities, and the exact planned Evaluation/Partition/Experiment
+mapping. Reserved runs expose all pending actions but execute none before opening.
+Protocol and selection bytes are checked at execution admission and before
+Outcome source reads; corrupted bytes block execution. Existing Partition access
+facts record actual access. A new Run, Target or Partition cannot relabel the
+reserved economic window as unused. The current protected labels cannot become
+FIT inputs; a later research design needs a separately declared access contract.
+Raw historical bars were already acquired and visible, so this protection is
+exploratory temporal evidence, never formal blindness, LOCKED_OOS or PIT.
+
+## Professional daily data recording contract
+
+`mra research provider-recording-check --contract "$SOURCE_CONTRACT" --recording
+"$RECORDED_RESPONSE" --expected-sha256 "$RECORDING_SHA256"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` validates a bounded local recording without SDK access.
+Add `--capture-product-id "$PROVIDER_PRODUCT_ID" --capture-key "$CAPTURE_KEY"`
+only to store it through the original Market Capture owner in the authorized
+research database. The request resource binds both the semantic contract hash
+and the exact raw recording hash. Capture time comes from the existing database
+clock; historical session dates never become source availability times.
+The Capture Artifact uses envelope v2, containing the complete contract,
+base64 of the exact original recording bytes and their original SHA-256,
+plus the non-sensitive CaptureRequest identity. Replay reconstructs that
+request hash and compares it with the original Capture owner. Envelope v1
+remains decodable with LEGACY_UNVERIFIED request identity; it cannot satisfy
+the exact owner replay check.
+`mra research provider-recording-replay --capture-id "$CAPTURE_ID"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` reloads the Capture owner, verifies its physical
+Artifact, and recovers the same contract and raw-byte identity without writes.
+The local request budget applies to one adapter invocation; its check/decrement
+is synchronized. Canonical Capture idempotency remains responsible for repeated
+requests. This does not implement a paid SDK download budget across restarts.
+
+The version-1 contract requires exact SDK version, sorted stock codes, inclusive
+date bounds, distinct dividend mode, evidenced volume units and timestamp
+meaning, a semantic-evidence hash, and row/byte/request budgets. Currency is
+CNY, prices are CNY per share, timezone is Asia/Shanghai, and `fill_data` must
+be false. Recordings retain `time`, OHLC, volume, amount, preClose, suspendFlag
+and a revision token. Duplicate/conflicting keys, nonfinite values, numeric
+loss, unknown suspension flags and timestamp/date disagreement are rejected.
+Suspended zero bars remain explicitly suspended. Calendar completeness, event
+interval mapping, adjustment equivalence, membership history, publication
+availability and finality still require their original owners and real evidence.
+
+XtQuant documents separate `none`, `front`, `back`, `front_ratio` and
+`back_ratio` modes, and a `fill_data` argument. They must not be collapsed into
+BaoStock adjustment semantics or silently filled observations. Its suspension
+flags distinguish normal, suspended and resumed observations.
+See the [official xtdata API](https://dict.thinktrader.net/nativeApi/xtdata.html).
+This package calls no paid service and imports no XtQuant SDK. Recordings marked
+`LOCAL_PROTOCOL_SUBSTITUTE` prove the local contract only; real professional
+Provider verification remains NOT_RUN. Permissions, history depth, latency,
+fees and permitted data uses require future live verification.
+
+For source comparisons, freeze a separate protocol and retain both sealed
+archives. Reuse `history-inventory` for Calendar/Instrument/gap rosters, then
+canonical Dataset manifests/cells, frozen Model inference, Outcome revisions
+and reconciled Evaluation/Backtest reports in that order. Match exact security,
+session, units, price basis and Target at each layer; mismatches block attribution
+and missing benchmark observations remain missing. Do not compare only headline
+metrics from runs that changed their populations or Targets.
+
+| Experiment | Frozen controls | Deliberate change |
+|---|---|---|
+| Fixed model, changed data | Exact ModelVersion/preprocessing, ordered Features, Target, population and dates | Source facts/revisions and their downstream values |
+| Fixed algorithm, retrained data | Algorithm/version/parameters, training and evaluation protocol, Target and population | Source plus fresh per-fold TrainingRun/ModelVersion |
+| Fixed new data, changed models | Exact sealed Archive, Dataset protocol, Target, split and common population | Predeclared finite model/feature matrix |
+
+Persist every layer's identities, exclusions and access record with the source
+protocol. A source adjustment mismatch requires an explicit verified mapping or
+NOT_ESTIMABLE. The recorded adapter is not a normalization implementation or
+evidence that a professional source supports the historical campaign end to end.
+
 This runbook describes available commands and safety boundaries, not a deployed
 service's current state. Use only the explicitly authorized project/database/
 user-job scope. Never stop an unknown process, substitute a restored writer, or
 reopen a terminal failed Run. Repository maintenance does not authorize deployment.
+
+## Historical data acquisition
+
+`mra research prepare-history-data` accepts the same isolated database, build,
+output and operator flags as `prepare-historical`. Its `mra-historical-acquisition-v1`
+plan freezes `archive_code`, exact `template_archive_id` / `template_archive_sha256`,
+`start_date`, `end_date` and sorted BaoStock `codes` already observed in that archive.
+It declares a separate ProviderProduct with explicit raw and backward-adjusted
+capabilities and starts the original MarketArchive owner. It does not download data.
+
+The request roster is Calendar, one security master per name, then daily raw and
+daily backward-adjusted history per name. It is capped at 66 names / 199 requests,
+six years, 32 MiB per response and 512 MiB total, with a 1 GiB free-space reserve
+by default. Dates must end before the actual UTC day. Current membership is never
+rewritten as historical membership. BaoStock remains an auxiliary exploratory
+source; paid-source permissions or PIT are not inferred.
+
+The `historical_archive_inventory_v10` registered upgrade adds `MIXED_EXPLICIT`
+only to retrospective archive inventories. Every Market bar and SourceGap retains
+its own exact price basis; prospective archives and individual prices cannot use
+this token. Raw Target labels and adjusted cross-day Feature dependencies can
+therefore share an exact sealed capture roster without relabeling either.
+Backward adjustment is BaoStock's documented percentage-change convention, not
+a distribution-reinvestment or executable return contract; see the publisher's
+[adjustment specification](https://www.baostock.com/helpdocs/pdf/BaoStock%E5%A4%8D%E6%9D%83%E5%9B%A0%E5%AD%90%E7%AE%80%E4%BB%8B.pdf).
+Actual capture/known times and unknown availability/finality are preserved.
+
+After the request roster reaches its intended terminal disposition, use
+`mra archive seal --archive-id "$ARCHIVE_ID" --expected-database-name
+"$RESEARCH_DATABASE_NAME" --actor-id "$RESEARCH_OPERATOR" --operation-key
+"$STABLE_SEAL_KEY" --disposition COMPLETE`. The original Archive owner checks
+the disposition; use `PARTIAL_WITH_GAPS` or `PARTIAL_WITH_RESOURCE_LIMIT` only
+when that owner-recorded condition applies. Sealing does not assert bar quality.
+
+`mra research history-inventory --archive-id "$ARCHIVE_ID" --seal-id "$SEAL_ID"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` verifies the frozen roster and Capture bytes, then
+reports Calendar coverage, each security × session × price basis denominator,
+missing/conflicting identities, listing facts, status summaries and revision
+roster hashes. Save stdout in persistent research storage. Missing security
+master captures do not remove frozen names from the denominator. The v2 inventory
+hashes sorted UUID bytes for immutable revision rosters; Capture and code/config
+hashes retain source/normalization identity. A counted bar is not necessarily a
+usable Feature, mature label or formal PIT observation.
+
+The historical Feature family has ten version-1 formulas, all unitless ratios:
+
+| Factor | Formula and complete-session dependency |
+|---|---|
+| intraday | Raw close / raw open − 1, current session |
+| return_1 / return_5 / return_20 | Backward-adjusted close / close N sessions earlier − 1; all N+1 Calendar sessions must have prices |
+| volatility_20 | Sample standard deviation of 20 adjusted daily returns, divisor 19; 21 closes |
+| volume_5_20 / amount_5_20 | Mean last 5 / mean last 20 − 1; raw shares / CNY amounts respectively |
+| peer_relative_5 / peer_relative_20 | Return minus equal-weight return of exact Dataset members with complete windows, at least two |
+| cross_section_5 | (Average tie rank of return_5 − 1) / (complete member count − 1), at least two |
+
+Peer arithmetic uses unrounded returns; final cells use Decimal precision 60,
+half-even rounding to 12 decimal places. The peer benchmark is not CSI300 or a
+tradable portfolio. Peer exclusions remain visible in the full Dataset. Windows
+use Market Calendar; participating exchanges must have aligned dates/closes.
+There is no weekday inference, raw-price fallback, zero-denominator replacement,
+forward fill or label input. Warmup/missing data are MISSING, explicit conflicts
+are CONFLICT, and failed Provider requests are UNKNOWN. Failed-request lineage
+retains slice/Capture/request hashes and real knowledge times, with no invented
+event time; it may explain unavailable cells but cannot support numeric values.
+
+The shared pure kernel accepts the last 21 sessions or a bounded incremental
+append. Backtest prepares exact population batches outside the owner transaction,
+verifies bytes after releasing the read connection, and uses no cross-invocation
+Authority cache. Dataset commit reloads full Calendar/bar/gap lineage. Existing
+daily and intraday formulas retain their original adapters and identities.
+
+Run the returned `archive-manifest.json` through `mra archive resume --manifest
+"$FROZEN_ARCHIVE_MANIFEST" --expected-database-name "$RESEARCH_DATABASE_NAME"
+--actor-id "$RESEARCH_OPERATOR" --operation-key "$STABLE_OPERATION_KEY"
+--maximum-slices 8 --maximum-seconds 1200`. Bounded mode discovers pending DUE/OVERDUE
+slices, admits no more than 200 slices / 7,200 seconds, spaces slices by at least
+0.25 seconds, drains the current owner operation and returns full Archive
+inspection with elapsed time. The Provider has a 30-second response deadline and
+at most two transport attempts. New mixed inventories apply these defaults even without budget flags. Reuse
+the frozen manifest and operation key on restart; captured/terminal slices are not downloaded again. Terminal gaps and
+resource stops remain evidence and require a new declared archive for correction.
+The existing seal, revision/gap report and replay owners remain authoritative.
 
 ## Daily reliability operations
 

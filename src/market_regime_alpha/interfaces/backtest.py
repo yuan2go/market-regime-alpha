@@ -66,8 +66,9 @@ def decode_backtest_specification(payload: bytes | str) -> BacktestSpecification
     try:
         document = json.loads(payload)
         root = _object(document, "Backtest specification")
-        if _text(root, "schema") != _SCHEMA:
-            raise ValueError(f"Backtest specification schema must be {_SCHEMA}")
+        schema = _text(root, "schema")
+        if schema not in {_SCHEMA,"mra-backtest-specification-input-v2"}:
+            raise ValueError("Backtest specification schema must be input-v1 or input-v2")
         defaults = _object(root["defaults"], "defaults")
         return BacktestSpecification(
             exploratory_backtest_run_id=_uuid(root, "exploratory_backtest_run_id"),
@@ -120,6 +121,7 @@ def decode_backtest_specification(payload: bytes | str) -> BacktestSpecification
             provenance_sha256=_text(root, "provenance_sha256"),
             sample_algorithm_version=_integer(root, "sample_algorithm_version"),
             sample_input_key=_text(root, "sample_input_key"),
+            specification_schema_version=1 if schema==_SCHEMA else 2,
         )
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError("Backtest specification input has invalid required shape") from exc
@@ -129,7 +131,7 @@ def encode_backtest_specification(specification: BacktestSpecification) -> bytes
     """Render deterministic source fields for operator transport or review."""
 
     payload: dict[str, object] = {
-        "schema": _SCHEMA,
+        "schema": _SCHEMA if specification.specification_schema_version==1 else "mra-backtest-specification-input-v2",
         "exploratory_backtest_run_id": str(specification.exploratory_backtest_run_id),
         "run_code": specification.run_code,
         "generation": specification.generation,

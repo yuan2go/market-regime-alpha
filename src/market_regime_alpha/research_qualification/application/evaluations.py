@@ -35,7 +35,9 @@ class EvaluationMutationResult:
 
 
 class EvaluationCommands:
-    def __init__(self, uow_provider: EvaluationUnitOfWorkProvider, *, id_factory: Callable[[], UUID], outcome_prices: OutcomeEpisodePriceReadPort | None = None) -> None:
+    def __init__(self, uow_provider: EvaluationUnitOfWorkProvider, *, id_factory: Callable[[], UUID], outcome_prices: OutcomeEpisodePriceReadPort | None = None,
+                 holdout_integrity: Callable[[UUID], None] | None = None) -> None:
+        self._holdout_integrity = holdout_integrity
         self._outcome_prices = outcome_prices
         self._uow_provider = uow_provider
         self._id_factory = id_factory
@@ -222,6 +224,8 @@ class EvaluationCommands:
 
     def _acquire_once(self, evaluation_run_id: UUID, context: CommandContext, *, runtime_claim: AttemptClaim | None) -> EvaluationMutationResult:
         request_hash = canonical_json_sha256({"evaluation_run_id": evaluation_run_id})
+        if self._holdout_integrity is not None:
+            self._holdout_integrity(evaluation_run_id)
         with self._uow_provider() as uow:
             receipt = self._start(uow, "ACQUIRE_OUTCOME_INPUTS", str(evaluation_run_id), request_hash, context, runtime_claim)
             if not receipt.is_new:

@@ -90,6 +90,22 @@ There is no new root per consumer. `backtest progress` reads Runtime state and
 explicitly does not perform full owner reconciliation. Inspect/replay/report
 must reconcile complete identities, parent/child rosters and physical Artifacts.
 
+Historical research preparation uses `mra research prepare-history-data` and
+`prepare-historical` to freeze existing Archive and Backtest inputs. Execution
+and resumption use the same `mra backtest` Runtime chain. The finite matrix
+re-trains separate ModelVersions from each declared FIT population while retaining
+actual training timestamps. Shared pure
+daily feature calculations feed canonical Dataset manifests, with exact source
+dependencies and explicit missing/prewarm states.
+
+`mra research holdout-reserve/select/open/inspect` belongs to the Backtest owner.
+Its reservation and opening freeze a later exploratory validation window, one
+selected candidate, seven controls and exact Evaluation/Partition/Experiment
+identities. The existing Partition access ledger records label reads. Neither
+these facts nor the paired `history-compare` projection creates a scheduler,
+label store or formal OOS authority. Raw retrospective prices remain accessible;
+this is temporal experimental protection, not formal blindness or PIT.
+
 The business dependency is Market → Universe/Eligibility → Dataset → Candidate
 → Decision/Target commitments → Context → Signal/Forecast → Opportunity
 → Portfolio → Risk. Outcome settles commitments; Evaluation consumes Outcome.

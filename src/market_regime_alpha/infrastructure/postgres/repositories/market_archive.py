@@ -19,10 +19,10 @@ from market_regime_alpha.market.domain import (
     MarketArchive,
     MarketArchiveSlice,
     MarketArchiveSeal,
-    PriceBasis,
     ProspectiveArchiveGenerationPlan,
     ProspectiveArchivePlanningGap,
 )
+from market_regime_alpha.market.domain.archive import parse_archive_price_basis
 from market_regime_alpha.market.ports.archive import (
     ArchiveResourceStopRecord,
     ArchiveSliceGapRecord,
@@ -334,7 +334,7 @@ class PostgresArchiveRepository:
             provider_product_id=UUID(str(row[1])),
             exchange_code=str(row[2]),
             timeframe=BarTimeframe(str(row[3])),
-            price_basis=PriceBasis(str(row[4])),
+            price_basis=parse_archive_price_basis(str(row[4])),
             instrument_scope=str(row[5]),
             instrument_scope_sha256=str(row[6]),
             event_window_start=row[7],

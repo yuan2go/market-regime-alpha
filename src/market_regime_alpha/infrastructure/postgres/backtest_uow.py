@@ -12,6 +12,7 @@ from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.repositories.backtests import (
     PostgresBacktestRepository,
 )
+from market_regime_alpha.infrastructure.postgres.repositories.backtest_holdout import PostgresBacktestHoldoutRepository
 from market_regime_alpha.infrastructure.postgres.repositories.runtime import (
     PostgresAuditRepository,
     PostgresCommandReceiptRepository,
@@ -51,6 +52,10 @@ class PostgresBacktestUnitOfWork:
         if self._connection is None:
             raise RuntimeError("Backtest UoW is not active")
         return self._connection
+
+    @property
+    def holdouts(self) -> PostgresBacktestHoldoutRepository:
+        return PostgresBacktestHoldoutRepository(self._active())
 
     @property
     def backtests(self) -> PostgresBacktestRepository:

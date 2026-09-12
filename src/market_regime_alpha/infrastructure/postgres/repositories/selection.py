@@ -115,15 +115,14 @@ class PostgresSelectionRepository:
         )
         return policy.version
 
-    def load_eligibility_policy(self, policy_id: UUID) -> EligibilityPolicy:
+    def load_eligibility_policy(self, policy_id: UUID, *, lock: bool = True) -> EligibilityPolicy:
         row = self._connection.execute(
             """
             SELECT eligibility_policy_id, market_provider_product_id,
                    policy_code, version, content_sha256, rule_count
             FROM mra.eligibility_policy
             WHERE eligibility_policy_id = %s
-            FOR SHARE
-            """,
+            """ + (" FOR SHARE" if lock else ""),
             (policy_id,),
         ).fetchone()
         if row is None:
@@ -170,7 +169,12 @@ class PostgresSelectionRepository:
             raise RuntimeNotFoundError(f"Universe {universe_id} does not exist")
         product = self._provider_product(scope.market_provider_product_id)
         fact_kinds = set(product[0])
-        required = {"INSTRUMENT", "CLASSIFICATION", "CLASSIFICATION_MEMBERSHIP"}
+        from market_regime_alpha.selection.domain.model import STATIC_RESEARCH_SCHEME
+        # Static research is a declared roster, never a Provider classification.
+        # Its caller still requires exact sealed identifiers and retrospective
+        # scope before committing any members.
+        required = ({"INSTRUMENT"} if scope.classification_scheme==STATIC_RESEARCH_SCHEME
+                    else {"INSTRUMENT", "CLASSIFICATION", "CLASSIFICATION_MEMBERSHIP"})
         if not required.issubset(fact_kinds):
             raise RuntimeStateConflictError("Universe scope provider product lacks canonical classification capabilities")
         artifact = self._connection.execute(
@@ -432,6 +436,19 @@ class PostgresSelectionRepository:
                 content_hash,
             ),
         )
+
+    def require_ordinary_universe_scope(self, universe_revision_id: UUID) -> None:
+        row = self._connection.execute(
+            """SELECT revision.classification_scheme,
+                      EXISTS (SELECT 1 FROM mra.exploratory_retrospective_universe_revision scope
+                              WHERE scope.universe_revision_id=revision.universe_revision_id)
+               FROM mra.universe_revision revision WHERE revision.universe_revision_id=%s
+               FOR SHARE OF revision""", (universe_revision_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError("Eligibility Universe does not exist")
+        if row[0] == "STATIC_RESEARCH_ROSTER" or row[1]:
+            raise RuntimeStateConflictError("retrospective Universe requires retrospective Eligibility")
 
     def require_exploratory_retrospective_universe_scope(
         self,

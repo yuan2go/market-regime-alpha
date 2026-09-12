@@ -15,6 +15,11 @@ from market_regime_alpha.shared.time import DecisionTime
 
 
 class SelectionMarketQueries(Protocol):
+    def require_static_research_roster(
+        self, *, scope: UniverseScopeSpecification,
+        retrospective: ExploratoryRetrospectiveSelectionScope,
+    ) -> None: ...
+
     def membership_as_of(
         self,
         *,

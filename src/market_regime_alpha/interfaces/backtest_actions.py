@@ -95,6 +95,7 @@ from market_regime_alpha.research_qualification.domain.research_vocabulary impor
 from market_regime_alpha.research_qualification.ports.backtest_actions import (
     BacktestActionReadPort,
     BacktestFeatureMaterializer,
+    BatchBacktestFeatureMaterializer,
     BacktestFeatureRequest,
     BacktestModelAdapter,
     BacktestTradingSession,
@@ -1121,21 +1122,28 @@ class BacktestCanonicalActionHandler:
             decision_time,
         )
         feature_definitions = self._reads.feature_definitions(specification)
+        requests = tuple(BacktestFeatureRequest(definition, retrospective_scope, member.instrument_id,
+            session.session_date, session.close_at) for member in population for definition in feature_definitions)
+        cells = {}
+        for adapter in self._feature_materializers:
+            selected = tuple(request for request in requests if self._feature_materializer(request.definition) is adapter)
+            if not selected:
+                continue
+            prepared = (adapter.materialize_batch(selected) if isinstance(adapter, BatchBacktestFeatureMaterializer)
+                        else tuple(adapter.materialize(request) for request in selected))
+            if len(prepared) != len(selected):
+                raise ValueError("Feature materializer returned an incomplete population")
+            for request, cell in zip(selected, prepared, strict=True):
+                if cell.feature_definition_id != request.definition.feature_definition_id:
+                    raise ValueError("Feature materializer returned a different definition")
+                cells[(request.instrument_id, request.definition.feature_definition_id)] = cell
         members = tuple(
             BacktestDatasetMember(
                 member.instrument_id.value,
                 member.universe_member_id,
                 member.eligibility_assessment_id,
                 tuple(
-                    self._feature_materializer(definition).materialize(
-                        BacktestFeatureRequest(
-                            definition,
-                            retrospective_scope,
-                            member.instrument_id,
-                            session.session_date,
-                            session.close_at,
-                        )
-                    )
+                    cells[(member.instrument_id, definition.feature_definition_id)]
                     for definition in feature_definitions
                 ),
             )
@@ -1155,6 +1163,7 @@ class BacktestCanonicalActionHandler:
             code_artifact=specification.code_artifact,
             config_artifact=specification.config_artifact,
             members=members,
+            empty_population_session_id=session.trading_session_id if not members else None,
         )
         manifest = self._artifacts.publish(
             materialized.manifest_content,

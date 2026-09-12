@@ -20,6 +20,7 @@ from market_regime_alpha.runtime.errors import (
     ArtifactIntegrityError,
     RuntimeStateConflictError,
 )
+from market_regime_alpha.research_qualification.domain.historical_features import FACTORS_BY_CODE, PEER_FACTOR_CODES
 
 
 def validate_population(
@@ -90,8 +91,8 @@ def validate_market_lineage(
                 else "Dataset Market source is not visible at its allowed knowledge cutoff"
             )
         if simulated_event_cutoff is not None and (
-            observation.event_cutoff_at is None
-            or observation.event_cutoff_at > simulated_event_cutoff
+            (observation.event_cutoff_at is None and observation.request_failure is None)
+            or (observation.event_cutoff_at is not None and observation.event_cutoff_at > simulated_event_cutoff)
         ):
             raise RuntimeStateConflictError(
                 "Exploratory Dataset Market source exceeds simulated event cutoff"
@@ -101,6 +102,7 @@ def validate_market_lineage(
                 "Dataset Market source lacks Foundation Artifact integrity"
             )
     feature_map = {item.feature_definition_id: item for item in features}
+    population_instrument_ids = {row.instrument_id for row in manifest.rows}
     requirement_roles = {
         FeatureSourceRequirement.MARKET_BAR_REVISION: (
             DatasetSourceRole.MARKET_BAR_REVISION
@@ -132,14 +134,35 @@ def validate_market_lineage(
                     )
             for source_id in cell.source_ids:
                 cell_observation = observation_map.get(source_id)
+                if cell_observation is not None and cell_observation.request_failure is not None:
+                    failure = cell_observation.request_failure
+                    factor = FACTORS_BY_CODE.get(definition.algorithm_code)
+                    calendar_identities = {o.source_identity for source_id in cell.source_ids
+                        if (o := observation_map.get(source_id)) is not None and o.role is DatasetSourceRole.MARKET_TRADING_SESSION
+                        and o.event_cutoff_at is not None}
+                    # This roster is resolved by the original Market read owner
+                    # at commit; arbitrary older Calendar references are not a
+                    # substitute for this Feature's actual lookback window.
+                    exact_window = () if factor is None else failure.closed_sessions[-(factor.lookback+1):]
+                    if (knowledge_cutoff is None or cell.status is FeatureCellStatus.AVAILABLE or factor is None
+                        or cell_observation.event_cutoff_at is not None or cell_observation.instrument_id is not None
+                        or cell_observation.role is not DatasetSourceRole.MARKET_SOURCE_GAP
+                        or failure.instrument_id != row.instrument_id or failure.price_basis != factor.basis
+                        or not any(identity in calendar_identities and failure.window_start <= moment <= failure.window_end
+                            for identity,moment in exact_window)):
+                        raise RuntimeStateConflictError("failed historical request can only explain an exact unavailable Feature window")
                 if (
                     cell_observation is not None
                     and cell_observation.instrument_id is not None
                     and cell_observation.instrument_id != row.instrument_id
                 ):
-                    raise RuntimeStateConflictError(
-                        "Dataset Market lineage belongs to a different Instrument"
-                    )
+                    # Only these exact, version-validated peer formulas may read
+                    # other members of this same owner-reconciled population.
+                    if (definition.algorithm_code not in PEER_FACTOR_CODES
+                        or cell_observation.instrument_id not in population_instrument_ids):
+                        raise RuntimeStateConflictError(
+                            "Dataset Market lineage belongs to a different Instrument"
+                        )
 
 
 def _required_uuid(value: UUID | None, field: str) -> UUID:

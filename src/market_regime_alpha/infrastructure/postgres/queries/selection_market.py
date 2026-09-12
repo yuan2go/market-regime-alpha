@@ -31,6 +31,25 @@ class PostgresSelectionMarketQueries:
     def __init__(self, connection: psycopg.Connection[Any]) -> None:
         self._connection = connection
 
+    def require_static_research_roster(self, *, scope: UniverseScopeSpecification,
+                                      retrospective: ExploratoryRetrospectiveSelectionScope) -> None:
+        """Verify identifiers in the sealed source; assert no historical membership."""
+        self._require_retrospective_archive(retrospective)
+        rows = self._connection.execute("""
+            SELECT DISTINCT binding.instrument_id
+            FROM mra.market_capture_instrument_normalization binding
+            JOIN mra.market_archive_capture_observation observation USING(capture_id)
+            JOIN mra.data_capture capture USING(capture_id)
+            JOIN mra.artifact artifact ON artifact.artifact_id=capture.artifact_id
+            WHERE observation.market_archive_id=%s AND observation.known_at<=%s
+              AND capture.provider_product_id=%s AND capture.status='CAPTURED'
+              AND mra.market_artifact_is_readable(artifact.integrity_state,artifact.last_verified_at)
+              AND binding.instrument_id=ANY(%s::uuid[])
+            """, (retrospective.market_archive_id, retrospective.knowledge_cutoff,
+                    scope.market_provider_product_id, [x.value for x in scope.instrument_ids])).fetchall()
+        if {row[0] for row in rows} != {x.value for x in scope.instrument_ids}:
+            raise ValueError("static research roster identifiers must belong to its exact readable Archive")
+
     def membership_as_of(
         self,
         *,

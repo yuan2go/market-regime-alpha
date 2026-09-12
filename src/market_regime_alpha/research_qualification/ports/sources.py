@@ -23,6 +23,20 @@ class DatasetPopulationMember:
 
 
 @dataclass(frozen=True, slots=True)
+class DatasetRequestFailureContext:
+    """Failed acquisition request, explicitly not a Market event or price."""
+    archive_slice_id: UUID
+    slice_sha256: str
+    capture_id: UUID
+    request_sha256: str
+    instrument_id: UUID
+    price_basis: str
+    window_start: datetime
+    window_end: datetime
+    closed_sessions: tuple[tuple[UUID, datetime], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class DatasetMarketSourceObservation:
     dataset_source_id: UUID
     role: DatasetSourceRole
@@ -31,6 +45,7 @@ class DatasetMarketSourceObservation:
     decision_visible_at: datetime
     foundation_integrity: bool
     event_cutoff_at: datetime | None = None
+    request_failure: DatasetRequestFailureContext | None = None
 
 
 class ResearchSourceQueries(Protocol):

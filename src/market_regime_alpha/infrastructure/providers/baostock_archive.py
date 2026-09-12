@@ -10,7 +10,7 @@ import math
 from contextlib import contextmanager, nullcontext
 import signal
 import threading
-from time import monotonic
+from time import monotonic, sleep
 from typing import Any, Protocol, Self
 
 from market_regime_alpha.market.domain import SourceAvailabilityStatus
@@ -26,6 +26,7 @@ class BaoStockArchiveQueryKind(str, Enum):
     TRADE_DATES = "TRADE_DATES"
     CSI300_MEMBERS = "CSI300_MEMBERS"
     HISTORY_DAILY_RAW = "HISTORY_DAILY_RAW"
+    HISTORY_DAILY_BACK_ADJUSTED = "HISTORY_DAILY_BACK_ADJUSTED"
     HISTORY_5M_RAW = "HISTORY_5M_RAW"
 
 
@@ -45,6 +46,7 @@ class BaoStockArchiveQuery:
             raise ValueError("end_date cannot precede start_date")
         if self.kind in {
             BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
+            BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED,
             BaoStockArchiveQueryKind.HISTORY_5M_RAW,
         }:
             if self.code is None or self.start_date is None or self.end_date is None:
@@ -66,7 +68,7 @@ class BaoStockArchiveQuery:
             "end_date": self.end_date.isoformat() if self.end_date is not None else None,
             "kind": self.kind.value,
             "start_date": self.start_date.isoformat() if self.start_date is not None else None,
-            "version": 1,
+            "version": 2 if self.kind is BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED else 1,
         }
         return json.dumps(payload, allow_nan=False, separators=(",", ":"), sort_keys=True)
 
@@ -82,7 +84,7 @@ class BaoStockArchiveQuery:
                 "version",
             }:
                 raise ValueError("resource has an unexpected field roster")
-            if payload["version"] != 1:
+            if payload["version"] not in (1, 2):
                 raise ValueError("resource version is unsupported")
             code = payload["code"]
             if code is not None and not isinstance(code, str):
@@ -146,6 +148,7 @@ class BaoStockSession:
         defer_login: bool = False,
         maximum_rows: int = 100_000,
         maximum_response_bytes: int = 33_554_432,
+        retry_interval_seconds: float = 0,
     ) -> None:
         if type(timeout_seconds) not in (int, float):
             raise TypeError("BaoStock timeout_seconds must be numeric, excluding bool")
@@ -162,6 +165,9 @@ class BaoStockSession:
                 raise ValueError(f"BaoStock {name} must be positive")
         if type(defer_login) is not bool:
             raise TypeError("BaoStock defer_login must be boolean")
+        if isinstance(retry_interval_seconds, bool) or not math.isfinite(retry_interval_seconds) or not 0 <= retry_interval_seconds <= 30:
+            raise ValueError("BaoStock retry_interval_seconds must be finite and between 0 and 30")
+        self._retry_interval_seconds = retry_interval_seconds
         self._sdk = sdk
         self._timeout_seconds = timeout_seconds
         self._maximum_attempts = maximum_attempts
@@ -275,8 +281,11 @@ class BaoStockSession:
     ) -> Any:
         last_error: Exception | None = None
         attempts = self._maximum_attempts if retry else 1
-        for _ in range(attempts):
+        for attempt_index in range(attempts):
             try:
+                if attempt_index and self._retry_interval_seconds:
+                    sleep(self._retry_interval_seconds)
+
                 # Execute owns one unreset alarm: each transport consumes its
                 # remaining deadline, including retries and deferred login.
                 if self._execute_deadline is not None and monotonic() >= self._execute_deadline:
@@ -317,7 +326,7 @@ class BaoStockSession:
             assert query.start_date is not None
             return self._sdk.query_hs300_stocks(date=query.start_date.isoformat())
         assert query.code is not None and query.start_date is not None and query.end_date is not None
-        frequency = "d" if query.kind is BaoStockArchiveQueryKind.HISTORY_DAILY_RAW else "5"
+        frequency = "5" if query.kind is BaoStockArchiveQueryKind.HISTORY_5M_RAW else "d"
         fields = (
             "date,code,open,high,low,close,preclose,volume,amount,adjustflag,turn,tradestatus,pctChg,isST"
             if frequency == "d"
@@ -329,7 +338,7 @@ class BaoStockSession:
             start_date=query.start_date.isoformat(),
             end_date=query.end_date.isoformat(),
             frequency=frequency,
-            adjustflag="3",
+            adjustflag="1" if query.kind is BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED else "3",
         )
 
 

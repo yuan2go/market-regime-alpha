@@ -8,6 +8,97 @@ the next experiment or deployment. Repository hygiene is complete at the
 implementation recorded in the archive index. Business feature development and
 live configuration changes require their own explicit scope.
 
+## Delivered: historical research campaign
+
+Baseline main is `2e5474342ec14b2dc74704cfa9ef981ffcfec870`. The task authorizes
+independent persistent research database/Artifacts, new research Features and
+ModelVersions, historical acquisition, training and experiments. The operating
+database, online Model/use, prospective cohorts and service remain separate.
+Destructive fixtures use a different disposable database. No push/PR/merge,
+paid Provider access, outbound notification or trading is authorized.
+
+The implementation extends the current Market/Archive, Feature/Dataset,
+Partition/Experiment, Model, Backtest, Outcome and Evaluation owners through
+`mra`; no separate scheduler, state store or experiment executor is introduced.
+The external immutable study protocol and reports live with persistent research
+Artifacts. This Roadmap remains the sole implementation plan.
+
+Initial boundaries, before any new holdout result is read:
+
+- Reconcile the existing 32-name, 11-session historical archive and physical
+  bytes; complete a small real daily longitudinal run before expanding.
+- Prefer 2022–2025 daily history over that same static 32-name roster. Preserve
+  shorter pilot results, listing exclusions and STATIC_UNIVERSE /
+  SURVIVORSHIP_LIMITED / EXPLORATORY_RETROSPECTIVE limits. Membership capture
+  time is not historical membership availability or formal PIT.
+- Retain the original next-session OPEN/CLOSE label and frozen rank rule.
+  Compare zero, FIT-label mean, raw daily move and its inverse, rank rule,
+  single-feature Ridge v1/v2 (alpha 1, seed 18). Merge only proved equivalents.
+- After baseline execution, add ten explicit daily Features: intraday return,
+  adjusted close returns 1/5/20 sessions, volatility 20, volume and amount
+  activity 5 versus 20, static-peer-relative returns 5/20 and cross-sectional
+  return-5 position. Adjusted cross-day features require separately declared
+  Provider price semantics; unsupported dependencies remain unavailable.
+- At most 20 candidate configurations: baseline controls, finite alpha
+  0.1/1/10 for expanded Ridge, and feature-group additions/removals. Freeze
+  the exact reduced matrix after the pilot's measured cost, before selection
+  or holdout access. Engineering reruns are separately identified.
+- Resolve rolling chronological FIT/VALIDATION/protected exploratory holdout
+  windows from actual captured sessions. Prefer three separated market periods;
+  exact lengths follow data quality and measured canonical execution cost.
+  Derive purge from next-session label maturity, preserve real acquisition and
+  training timestamps, and freeze selected parameters before holdout execution.
+- Primary selection metric is common-sample validation MAE; daily Rank IC is
+  the primary ordering diagnostic, separate from pooled errors. Report every
+  attempt, full/common populations, fold/month/security concentration and
+  feature ablations. Use paired trading-day block bootstrap (five-session
+  blocks, fixed seed 18, 1,000 draws) only when enough days/blocks exist.
+- Acquisition budget: at most 200 requests, 33 securities including benchmark,
+  2022-01-01 through 2026-02-26, two retries per known read failure, 30 seconds
+  per request, at least 0.25 seconds between requests, 512 MiB response storage
+  and two hours per invocation. Resource failure retains resumable owner work.
+  Canonical runs stop at explicit action/time/storage budgets and resume exact
+  plans; large-run performance is measured separately from fixtures.
+- Economic diagnosis uses existing episode Evaluation semantics where supported;
+  unsupported fillability/cash-path facts are NOT_ESTIMABLE, never account NAV.
+  Professional Provider contract and source comparisons remain exploratory;
+  actual paid-source validation is NOT_RUN without authorized samples.
+
+| Risk → verification | Concrete boundary and necessary gate |
+|---|---|
+| Data authority/time inflation | Archive manifest/Capture/normalizer/read ports: real small archive, fixed source hashes, actual clocks, full session × member quality, missing/duplicate/conflict/suspension, idempotent resume |
+| Wrong features or adjusted-price mixing | Pure daily feature kernel + Backtest materializer: independent values, prewarm/missing/cutoff/units, full versus incremental equivalence, exact dependency roster |
+| Leakage or reused holdout | Partition/Experiment/Backtest owner: fit-only preprocessing, future labels refused, frozen selection identity and persistent first-access protection, real PostgreSQL negatives |
+| Incorrect model/baseline comparison | Existing Model adapters and fitted artifacts: v1/v2 same inputs, numerical round trip, constant IC NOT_ESTIMABLE, raw-factor rank equivalence, full/common populations |
+| Partial execution mistaken for completion | Runtime/Backtest continuation and owner replay: actual historical interrupted run/resume, atomic Receipt/Audit/completion, completed work not repeated, damaged Artifact refused |
+| Report derives a second truth | Evaluation/Backtest report consumers: canonical acquired labels, exact paired roster, deterministic uncertainty and fold/ablation reports, no raw-CSV metrics |
+| New source changes many variables | Market provider contracts and comparison: same facts/features/frozen model/labels/Evaluation, explicit units/time/adjustment/finality, local recorded response verification |
+| Packaging or documentation drift | Locked dependencies, focused owner regression, inventory/docs/static gates, independent installed wheel CLI and report/replay |
+
+- [x] Owner/physical data inventory, persistent scope and frozen pilot protocol.
+- [x] Real small-sample daily Backtest/Model/Outcome/Evaluation/report and resume.
+- [x] Bounded historical expansion and explicit ten-feature calculations;
+  sealed 2022–2025 archive and real two-period engineering preflight retained.
+- [x] Protected holdout, finite candidate plans, baseline and ablation execution:
+  twenty configurations over three development periods, followed by the one
+  selected expansion plus seven controls on a later ten-session window.
+- [x] Reconciled paired reports, economic limits and professional-source contracts.
+  Main and holdout reports replay without mismatches. Current Ridge does not
+  beat zero on error in any of the four observed windows; the momentum group's
+  small descriptive improvement is a future hypothesis, not an admission.
+- [x] Necessary regression, installed wheel, persistent command/hash indexes,
+  implementation/final revisions and six independently reported acceptance gates.
+  Actual fresh restore passed 196 table hashes and 2,114 Artifacts; a missing
+  fitted Artifact was refused, exact bytes restored, and replay/repeated resume
+  left all business table hashes unchanged. No operating writer was switched.
+
+The next research work requires a new experiment and validation arrangement:
+fewer predeclared controls plus the limited momentum hypothesis, longer training
+windows, more months and better historical member/adjustment evidence. The
+accessed holdout cannot be reused for parameter selection. Full-feature stacking
+and further single-feature alpha scans are not supported by these results.
+No such follow-up experiment, paid data access or model promotion was executed.
+
 ## Engineering delivered: continuous research reliability
 
 The continuous research reliability package starts from main

@@ -519,6 +519,7 @@ def _require_training_root(
     connection: psycopg.Connection[Any],
     request: OpenModelTrainingRunRequest,
 ) -> tuple[tuple[UUID, str], ...]:
+    connection.execute("SELECT mra.require_backtest_holdout_training_access(%s)", (request.evaluation_run_id,))
     row = connection.execute(
         """
         SELECT model.feature_count, model.feature_roster_sha256
@@ -535,7 +536,6 @@ def _require_training_root(
         JOIN mra.exploratory_backtest_run AS backtest
           ON backtest.exploratory_backtest_run_id = %s
          AND backtest.target_definition_id = model.target_definition_id
-         AND backtest.feature_count = model.feature_count
          AND mra.model_backtest_feature_rosters_match(
              model.model_id, backtest.exploratory_backtest_run_id
          )

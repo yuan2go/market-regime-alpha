@@ -285,8 +285,17 @@ class PostgresModelForecastQueryProvider:
                 """,
                 (forecast_group_id,),
             ).fetchall()
-        if not rows:
-            return None
+            if not rows:
+                empty = _empty_model_forecast(connection, forecast_group_id)
+                if empty is None:
+                    return None
+                return ModelForecastBindingSummary(
+                    forecast_group_id=forecast_group_id,
+                    model_version_id=empty[0],
+                    binding_count=0,
+                    binding_roster_sha256=canonical_json_sha256(()),
+                    receipt_result_hash=str(empty[1]),
+                )
         model_versions = {UUID(str(item[0])) for item in rows}
         result_hashes = {str(item[4]) for item in rows}
         if len(model_versions) != 1 or len(result_hashes) != 1:
@@ -309,6 +318,54 @@ class PostgresModelForecastQueryProvider:
             ),
             receipt_result_hash=next(iter(result_hashes)),
         )
+
+
+def _empty_model_forecast(
+    connection: psycopg.Connection[Any],
+    forecast_group_id: UUID,
+    *,
+    lock: bool = False,
+) -> tuple[UUID, str | None] | None:
+    """Reload an explicit empty owner root; absence is never an empty roster.
+
+    There are no per-forecast model bindings in this case. The original
+    command's exact scope binds the ModelVersion, including during atomic
+    insertion before its receipt succeeds. Replay requires the terminal receipt.
+    """
+    from market_regime_alpha.infrastructure.postgres.repositories.decision_inference import (
+        PostgresInferenceRepository,
+    )
+
+    suffix = " FOR SHARE OF run, decision, receipt, version" if lock else ""
+    row = connection.execute(
+        """
+        SELECT run.signal_group_id, version.model_version_id, receipt.result_hash
+        FROM mra.forecast_run run
+        JOIN mra.decision_run decision USING (decision_run_id)
+        JOIN mra.command_receipt receipt
+          ON receipt.receipt_id = run.command_receipt_id
+         AND receipt.command_kind = 'PRODUCE_MODEL_SIGNAL_AND_FORECAST'
+         AND receipt.request_hash = run.request_sha256
+         AND receipt.idempotency_key = run.request_identity
+        JOIN mra.model_version version
+          ON receipt.scope_id = run.decision_run_id::text || ':' ||
+             run.strategy_version_id::text || ':' || version.model_version_id::text
+        WHERE run.forecast_group_id = %s AND run.forecast_count = 0
+          AND run.estimate_count = 0 AND decision.commitment_count = 0
+          AND (receipt.status = 'SUCCEEDED' OR (%s AND receipt.status = 'PENDING'))
+          AND NOT EXISTS (SELECT 1 FROM mra.forecast_model_binding binding
+                          WHERE binding.forecast_group_id = run.forecast_group_id)
+        """ + suffix,
+        (forecast_group_id, lock),
+    ).fetchone()
+    if row is None:
+        return None
+    closure = PostgresInferenceRepository(connection).reconcile(
+        UUID(str(row[0])), forecast_group_id, lock=lock,
+    )
+    if not closure.matched or closure.signal_count != 0:
+        raise InferenceAuthorityIntegrityError("Empty Model Forecast owner roster differs")
+    return UUID(str(row[1])), str(row[2]) if row[2] is not None else None
 
 
 def _load_root(

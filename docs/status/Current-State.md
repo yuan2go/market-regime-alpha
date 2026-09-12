@@ -7,9 +7,164 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+
+## Historical research campaign delivered
+
+The independent historical pilot at implementation
+`58adbe97a6973b73de62acb9bd1e7e0a64c816e4` completed canonical Backtest
+`eb7b0b26-608e-5c96-a767-56ca4c4c2ebc`, including a bounded stop, fresh-process
+resume, six newly trained control/Ridge ModelVersions, 21 Evaluations, published
+report and matched replay. The original failed pilot remains terminal and retained.
+The source archive contains 32 names over eleven January 2026 sessions; the pilot
+uses two FIT and two validation sessions with explicit maturity/purge/embargo.
+
+On the 64 validation observations, Ridge v1/v2 MAE is approximately 0.01764 versus
+0.01746 for zero. Ridge, raw factor and frozen rule share mean daily Rank IC
+approximately -0.195. Constants retain NOT_ESTIMABLE rank diagnostics. This is a
+tiny descriptive result with STATIC_UNIVERSE / SURVIVORSHIP_LIMITED / retrospective
+knowledge limitations; it establishes neither stable model increment nor formal
+PIT/OOS or economic validity. Feature ablation and protected temporal validation
+remain active work in the [Roadmap](Roadmap.md).
+
+The independent expansion acquired all 97 frozen BaoStock requests under
+implementation `c8dac4b14789cd828c2f302bc9ded41fa24b1aa0` and sealed archive
+`44d0020a-04d7-5954-b9db-f64de8840eaf` with seal
+`77f31d6a-f2db-4393-91ae-bde57b51412b`. It covers 969 actual sessions in 2022–2025,
+the same fixed 32 securities, and 60,398 raw/adjusted DAILY bar revisions. Each
+price basis has 30,199 available observations out of 31,008 expected static-roster
+slots; the remaining 809 retain exact gap reasons. The full source inventory
+contains 3,208 MISSING and 14 INVALID_OHLC gaps across fact kinds. Listing and
+status observations retain actual September 2026 knowledge times. These facts
+establish exploratory historical coverage, not PIT or model value.
+
+The first eight captures took 32.42 seconds; fresh-process continuation of the
+remaining 89 took 544.38 seconds. Full physical inventory initially took 12.88
+seconds / 698 MB maximum resident memory. Bounded fact-roster hashing and compact
+status summaries reduced the same scope to 3.05 seconds / 187 MB. The first
+inventory and its measurements remain retained; the operating database was not
+written.
+
+The ten-factor engineering preflight at implementation
+`1963df3bc40add349ad5dd7bb43f935f5e01c810` completed Backtest
+`2ff87208-ba56-572e-8aa9-fd890211fc12`: eight arms, two separated periods,
+64 Datasets, fourteen fresh ModelVersions, forty Evaluations and 246 actions.
+The independent wheel stopped after one action and resumed to completion;
+the published report replays without mismatches. Continuation took 543.87 seconds,
+including 125.87 seconds of reconciliation, with peak memory about 143 MB.
+The earlier preflight declaration failure is preserved separately.
+
+Its four validation dates have 118 common observations of 128 expected.
+Zero MAE is about 0.01732, original Ridge v1/v2 0.01998 and full-feature Ridge
+0.01949. Mean daily Rank IC is approximately -0.01836 for original Ridge and
+-0.00554 for full Ridge; constants remain NOT_ESTIMABLE. These four dates were
+viewed during engineering preflight and cannot be presented as unseen holdout.
+They establish a real feature/training/report chain, not stable information gain.
+
+The predeclared main matrix completed twenty configurations over three separated
+2022/2023/2024 periods, with ten FIT and ten validation sessions per period.
+Backtest `7b2f292c-3334-5c86-916b-7f950a61da4d` used the independent installed
+wheel at `e7c9d42d36cbc97ad56e64bf0231031f552c6ff9`: 3,797 completed actions,
+57 fresh fold ModelVersions, 1,200 each of Dataset/Decision/Outcome actions,
+120 fold Evaluations and twenty aggregate Evaluations. Its report publication
+`3b66c515-6862-55e5-b9b4-0ca4cfc549dd` and owner replay have no mismatches.
+Seven bounded invocations consumed 15,789.91 execution seconds; final invocation
+peak memory was about 628 MB. The full paired comparison took 242.06 seconds
+and about 725 MB. These are actual research measurements on a shared host,
+including visible reconciliation and final drain, not isolated capacity claims.
+
+The thirty validation dates contain 960 full static-roster slots, 930 canonical
+label-available observations and 922 pairs common to all arms. Common MAE is
+0.014726 for zero, 0.015268 for FIT mean, 0.015343 for original Ridge v1/v2 and
+0.015801 for the frozen rule. Original Ridge beats the rule's error but does not
+beat zero in any of the three periods. Its mean daily IC is 0.0510 overall,
+with period values 0.1856, -0.0180 and -0.0145. Single-feature Ridge ordering is
+exactly the raw factor or its inverse on every date; v2 numerical semantics do
+not create new ordering information.
+
+Among the thirteen frozen expanded candidates, adding the momentum group has
+the lowest common MAE, 0.015338, versus 0.019524 for the full alpha-1 model.
+The tiny improvement against original Ridge is sensitive to individual names;
+all primary samples and post hoc concentration diagnostics remain visible.
+Six effective five-day blocks do not meet the frozen ten-block uncertainty
+floor. Intervals are NOT_ESTIMABLE, and the June/July windows do not establish
+stability across seasons or formal market regimes.
+
+The selected holdout, Backtest `67794a06-8f16-5732-ace1-de8b00aa4f13`, completed
+511 actions at implementation `81f1ce47508c30e25f9e7dfe104ac2bf77641375`:
+eight arms, seven fresh Models, 160 each of Dataset/Decision/Outcome actions and
+24 Evaluations. Publication `69fa8d49-cf69-5aed-a376-12b9e0658446` replays with
+no mismatches. All arms have 320/320 common observations on ten validation dates
+from 2025-06-19 through 2025-07-02. The first action stopped cleanly; a new process
+completed the remaining 510 without reselection or repeated completed work.
+Main plus holdout used 4,308 actions and 17,815.37 execution seconds, within the
+frozen 5,000-action / 21,600-second budget. Engineering and replay costs are
+separately recorded.
+
+Holdout MAE is 0.011100 for FIT mean, 0.011141 for zero, 0.011184 for momentum,
+0.011213 for original Ridge and 0.012672 for the frozen rule. Momentum mean daily
+IC is 0.0844 versus 0.0458 for Ridge and the inverse raw factor. The ordering
+improvement is in the eight June dates; momentum IC is lower than Ridge in the
+two July dates.
+Two effective five-day blocks cannot support the frozen uncertainty floor.
+Current Ridge therefore has not demonstrated superiority to simple error
+baselines. Momentum is a limited follow-up hypothesis, not established stable
+increment or Alpha. No full-feature model or parameter is promoted.
+
+Reservation `e91b28ae-0ba9-5fc9-bcc6-0dd706a5881f` binds the protocol hash,
+development comparison, selected recipe and exact allowed Evaluation scopes.
+Its first opening is 2026-09-12 15:58:48.065377 UTC; all 511 actions were visible
+with zero Runtime bindings before opening. Raw historical prices were already
+available, so the protection is exploratory temporal access control, not formal
+blindness, PIT or LOCKED_OOS. The accessed holdout cannot be reused for selection.
+
+Implementation `81f1ce47508c30e25f9e7dfe104ac2bf77641375` adds the registered
+`backtest_exploratory_holdout_v12` upgrade, append-only reservation/opening facts
+and existing Partition access records. The independent research database was
+upgraded from its exact backup with all 176 historical table hashes preserved.
+The operating database was not upgraded. The final affected shared-owner
+PostgreSQL regression passed 28 tests; schema/registered upgrade regression
+passed eleven tests. An independent wheel also exercised the version-2 recorded
+professional Capture contract and idempotent, zero-write replay against local
+synthetic protocol input. Real professional Provider validation is NOT_RUN.
+
+The final numerical model/baseline contract run passed 24 tests, including
+constant and tiny nonzero scales and fit/serialize/load/predict consistency.
+`mra research daily lineage` on momentum ModelVersion
+`3924eb4a-b7cd-5741-bc65-d90b93f6f444` reconciles FIT Evaluation
+`8db751a6-35d9-59bb-be7e-ee00ad38d837`, TrainingRun
+`697a0c31-7663-5bb2-aa07-9141b1361658`, fitted Artifact
+`8da7c0ab-db70-4dfd-9df0-018aa4cba953` and the completed main Backtest/report.
+Its first later condition is `NO_EXPERIMENTAL_MODEL_USE`, expected for an
+independent historical model. No online Use or prospective cohort was created.
+
+The final research backup contains 196 tables, 2,114 Artifacts (3,104,743,422
+physical bytes) and a 491,973,099-byte dump with SHA-256
+`b10d2451fbd62f7a11eb858c298e18fbdeef1a1f3c464f4b5cadde32688b5996`.
+Actual `pg_restore --single-transaction` into a third, pristine disposable
+database and new root passed full table/Artifact checks, three Archive replays
+and all Backtest integrity checks. Five Backtests replay completed; the failed
+pilot remains FAILED with matched integrity. Restore took 895.81 seconds on the
+shared host, independently measured from research execution.
+
+Removing one fitted Artifact from only the restored copy made `evidence verify`
+exit 2 with exactly `ARTIFACT_BYTES_MISSING`. After exact-byte restoration, main
+replay matched again and completed holdout `resume` attempted zero actions.
+All 196 table hashes remained identical to the backup and all 2,114 physical
+Artifacts reconciled. No restored copy was selected as an operating writer.
+
+| Historical campaign gate | Result |
+|---|---|
+| ENGINEERING_VERIFICATION | PASS for targeted owner, numerical, schema, packaging and actual restore/replay checks; full repository long regression NOT_RUN |
+| REAL_HISTORICAL_EXECUTION | PASS: acquired auxiliary data, pilot, feature preflight, twenty-arm matrix and selected holdout executed |
+| TEMPORAL_VALIDATION | PASS for exploratory chronology and protected canonical access; no formal PIT or LOCKED_OOS qualification |
+| MODEL_INCREMENTAL_VALUE | NOT_ESTABLISHED; limited momentum hypothesis, simple error baselines remain stronger |
+| ECONOMIC_VALIDITY | NOT_ESTIMABLE; no verified execution/account path |
+| PROFESSIONAL_PROVIDER_READINESS | Versioned contract/local recorded Capture and replay PASS; real Provider NOT_RUN |
+
+
 ## Continuous research reliability engineering
 
-The current development baseline is main
+The completed continuous-research package used main
 `76c19a60f5106dd184a20fdaf46d786629a9cd99`. This package changes the existing
 daily/Runtime composition; it does not activate an installation, mutate the
 original operating database or send a real notification. The operational
@@ -347,7 +502,7 @@ All model comparisons remain **DESCRIPTIVE / NOT_ALPHA_EVIDENCE**.
 
 <!-- schema-facts:start -->
 Epoch: `MRA_REFOUNDATION_1`.
-Research table count: **194**.
+Research table count: **196**.
 <!-- schema-facts:end -->
 
 These values are checked against the executable SchemaManager contract.

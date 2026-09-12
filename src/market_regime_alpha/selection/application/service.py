@@ -325,26 +325,39 @@ class SelectionApplication:
                 self._finalize_runtime(uow, runtime_claim, receipt_id=receipt.receipt_id, result_hash=existing.result_hash)
                 uow.commit()
                 return replace(existing, receipt_id=receipt.receipt_id, replayed=True)
-            members = tuple(
-                self._classify_member(
-                    instrument_id=instrument_id,
-                    evidence=(
-                        uow.market_queries.membership_for_exploratory_retrospective(
-                            scope=scope,
-                            instrument_id=instrument_id,
-                            retrospective=retrospective_scope,
-                        )
-                        if retrospective_scope is not None
-                        else uow.market_queries.membership_as_of(
-                            scope=scope,
-                            instrument_id=instrument_id,
-                            decision_time=decision_time,
-                        )
-                    ),
-                    scope=scope,
+            from market_regime_alpha.selection.domain.model import STATIC_RESEARCH_SCHEME
+            if scope.classification_scheme == STATIC_RESEARCH_SCHEME:
+                if retrospective_scope is None:
+                    raise ValueError("static research rosters cannot enter prospective Selection")
+                uow.market_queries.require_static_research_roster(scope=scope, retrospective=retrospective_scope)
+                members = tuple(UniverseMemberDecision(
+                    self._id_factory(), instrument_id, UniverseMembershipStatus.INCLUDED,
+                    MarketEvidenceStatus.MISSING, None, None, None, None, None, None,
+                    "STATIC_RESEARCH_ROSTER", canonical_json_sha256({
+                        "basis": "STATIC_UNIVERSE/SURVIVORSHIP_LIMITED", "scope": scope,
+                        "instrument_id": instrument_id, "retrospective_scope": retrospective_scope,
+                    })) for instrument_id in scope.instrument_ids)
+            else:
+                members = tuple(
+                    self._classify_member(
+                        instrument_id=instrument_id,
+                        evidence=(
+                            uow.market_queries.membership_for_exploratory_retrospective(
+                                scope=scope,
+                                instrument_id=instrument_id,
+                                retrospective=retrospective_scope,
+                            )
+                            if retrospective_scope is not None
+                            else uow.market_queries.membership_as_of(
+                                scope=scope,
+                                instrument_id=instrument_id,
+                                decision_time=decision_time,
+                            )
+                        ),
+                        scope=scope,
+                    )
+                    for instrument_id in scope.instrument_ids
                 )
-                for instrument_id in scope.instrument_ids
-            )
             included = sum(item.membership_status is UniverseMembershipStatus.INCLUDED for item in members)
             excluded = sum(item.membership_status is UniverseMembershipStatus.EXCLUDED for item in members)
             unknown = sum(item.membership_status is UniverseMembershipStatus.UNKNOWN for item in members)
@@ -485,6 +498,12 @@ class SelectionApplication:
         ):
             if runtime_claim is not None:
                 uow.runtime_finalization.lock_live(runtime_claim)
+            if retrospective_scope is None:
+                uow.selection.require_ordinary_universe_scope(universe_revision_id)
+            else:
+                uow.selection.require_exploratory_retrospective_universe_scope(
+                    universe_revision_id, retrospective_scope,
+                )
             receipt = uow.receipts.start(
                 receipt_id=self._id_factory(),
                 command_kind=command_kind,

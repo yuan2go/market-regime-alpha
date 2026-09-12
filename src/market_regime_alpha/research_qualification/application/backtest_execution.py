@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Iterable, Mapping
+from dataclasses import dataclass, replace
+from time import perf_counter
+from typing import Callable, Iterable, Mapping
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from market_regime_alpha.research_qualification.domain.backtest import (
@@ -14,6 +15,8 @@ from market_regime_alpha.research_qualification.domain.backtest import (
 )
 from market_regime_alpha.research_qualification.domain.backtest_execution import (
     BacktestActionKind,
+    BacktestExecutionBudget,
+    BacktestInvocationStatistics,
     BacktestActionObservation,
     BacktestExecutionPlan,
     BacktestExecutionState,
@@ -362,34 +365,67 @@ class BacktestExecutor:
         actions: BacktestActionExecutionPort,
         *,
         planner: BacktestExecutionPlanner | None = None,
+        execution_blockers: Callable[[UUID], tuple[str, ...]] | None = None,
     ) -> None:
         self._observations = observations
         self._actions = actions
         self._planner = planner or BacktestExecutionPlanner()
+        self._execution_blockers = execution_blockers
+        self.last_invocation: BacktestInvocationStatistics | None = None
 
-    def run(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
-        expected = self._planner.compile(run).expected_actions
-        observed = self._observations.observe(run, expected)
-        if any(item.state is not BacktestObservedState.ABSENT for item in observed):
-            raise BacktestExecutionIntegrityError("backtest run requires no execution evidence; use resume")
-        return self._drive(run)
+    def run(self, run: FrozenBacktestRun, *, budget: BacktestExecutionBudget | None = None) -> BacktestExecutionPlan:
+        return self._drive(run, budget=budget, require_unstarted=True)
 
-    def resume(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
-        return self._drive(run)
+    def resume(self, run: FrozenBacktestRun, *, budget: BacktestExecutionBudget | None = None) -> BacktestExecutionPlan:
+        return self._drive(run, budget=budget)
 
     def inspect(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
         expected = self._planner.compile(run).expected_actions
         observed = self._observations.observe(run, expected)
-        return self._planner.compile(run, observed)
+        plan = self._planner.compile(run, observed)
+        blockers = self._blockers(run)
+        return replace(plan, ready_actions=(), execution_blockers=blockers) if blockers else plan
+
+    def _blockers(self, run: FrozenBacktestRun) -> tuple[str, ...]:
+        return () if self._execution_blockers is None else self._execution_blockers(run.exploratory_backtest_run_id)
 
     def progress(self, run: FrozenBacktestRun) -> BacktestRuntimeProgress:
         return self._observations.runtime_progress(
             run, self._planner.compile(run).expected_actions,
         )
 
-    def _drive(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
+    def _drive(self, run: FrozenBacktestRun, *, budget: BacktestExecutionBudget | None = None,
+               require_unstarted: bool = False) -> BacktestExecutionPlan:
+        started = perf_counter()
+        statistics = {"attempted_actions": 0.0, "action_seconds": 0.0, "reconciliation_count": 0.0,
+                      "reconciliation_seconds": 0.0, "budget_reached": 0.0}
+        reason = "EXCEPTION_REQUIRES_RECONCILIATION"
+        try:
+            result = self._drive_actions(run, budget=budget, require_unstarted=require_unstarted,
+                                         started=started, statistics=statistics)
+            reason = "BLOCKED" if result.execution_blockers else ("BUDGET_REACHED" if statistics["budget_reached"] else result.execution_state.value)
+            return result
+        finally:
+            self.last_invocation = BacktestInvocationStatistics(reason, int(statistics["attempted_actions"]),
+                perf_counter() - started, statistics["action_seconds"], int(statistics["reconciliation_count"]),
+                statistics["reconciliation_seconds"])
+
+    def _drive_actions(self, run: FrozenBacktestRun, *, budget: BacktestExecutionBudget | None,
+                       require_unstarted: bool, started: float, statistics: dict[str, float]) -> BacktestExecutionPlan:
+        def observe(run, actions):
+            before = perf_counter()
+            try:
+                return self._observations.observe(run, actions)
+            finally:
+                statistics["reconciliation_count"] += 1
+                statistics["reconciliation_seconds"] += perf_counter() - before
         expected = self._planner.compile(run).expected_actions
-        observed = self._observations.observe(run, expected)
+        observed = observe(run, expected)
+        blockers = self._blockers(run)
+        if blockers:
+            return replace(self._planner.compile(run, observed), ready_actions=(), execution_blockers=blockers)
+        if require_unstarted and any(item.state is not BacktestObservedState.ABSENT for item in observed):
+            raise BacktestExecutionIntegrityError("backtest run requires no execution evidence; use resume")
         max_transitions = len(expected) * 4 + 1
         transitions = 0
         for _ in range(max_transitions):
@@ -411,13 +447,28 @@ class BacktestExecutor:
             # affected owner before later writes, and the entire owner graph
             # before admitting any newly unlocked dependency.
             for ordinal, ready in enumerate(plan.ready_actions, start=1):
+                blockers = self._blockers(run)
+                if blockers:
+                    return replace(plan, ready_actions=(), execution_blockers=blockers)
                 if transitions >= max_transitions:
                     raise BacktestExecutionIntegrityError("Backtest exceeded its bounded canonical transition budget")
+                if budget is not None and (transitions >= budget.maximum_actions or perf_counter() - started >= budget.maximum_seconds):
+                    checked = observe(run, expected)
+                    checked_plan = self._planner.compile(run, checked)
+                    if checked_plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
+                        raise BacktestExecutionIntegrityError("Backtest budget drain found an owner mismatch")
+                    statistics["budget_reached"] = 1
+                    return checked_plan
                 transitions += 1
-                self._actions.execute(run, ready.action, ready.operation)
+                statistics["attempted_actions"] += 1
+                action_started = perf_counter()
+                try:
+                    self._actions.execute(run, ready.action, ready.operation)
+                finally:
+                    statistics["action_seconds"] += perf_counter() - action_started
                 full_scope = ordinal == len(plan.ready_actions)
                 scope = expected if full_scope else (ready.action,)
-                checked = self._observations.observe(run, scope)
+                checked = observe(run, scope)
                 checked_plan = self._planner.compile(run, checked)
                 if checked_plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
                     mismatches = ",".join(map(str, checked_plan.integrity_mismatch_action_ids))
@@ -429,7 +480,7 @@ class BacktestExecutor:
                         # Keep a valid in-flight lease without admitting more
                         # writes from a stale readiness snapshot.
                         if not full_scope:
-                            checked = self._observations.observe(run, expected)
+                            checked = observe(run, expected)
                             checked_plan = self._planner.compile(run, checked)
                         if checked_plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
                             raise BacktestExecutionIntegrityError("Backtest recovery reconciliation produced INTEGRITY_ERROR")
@@ -440,7 +491,7 @@ class BacktestExecutor:
                 elif state is not BacktestObservedState.MATCHED_COMPLETE:
                     # Retry, incomplete work and terminal failure need a fresh
                     # global decision before any independent action proceeds.
-                    observed = self._observations.observe(run, expected)
+                    observed = observe(run, expected)
                     break
         raise BacktestExecutionIntegrityError("Backtest exceeded its bounded canonical transition budget")
 

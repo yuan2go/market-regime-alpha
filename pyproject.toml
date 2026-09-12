@@ -70,6 +70,17 @@ ignore = ["E402", "E501"]
 python_version = "3.12"
 mypy_path = "src"
 files = [
+    "src/market_regime_alpha/research_qualification/domain/historical_features.py",
+    "src/market_regime_alpha/research_qualification/domain/historical_matrix.py",
+    "src/market_regime_alpha/research_qualification/domain/historical_comparison.py",
+    "src/market_regime_alpha/research_qualification/application/historical_comparison.py",
+    "src/market_regime_alpha/research_qualification/domain/backtest_holdout.py",
+    "src/market_regime_alpha/research_qualification/application/backtest_holdout.py",
+    "src/market_regime_alpha/research_qualification/ports/backtest_holdout.py",
+    "src/market_regime_alpha/infrastructure/recorded_professional_provider.py",
+    "src/market_regime_alpha/research_qualification/ports/historical_features.py",
+    "src/market_regime_alpha/infrastructure/historical_features.py",
+    "src/market_regime_alpha/infrastructure/historical_request_failure.py",
     "src/market_regime_alpha/shared",
     "src/market_regime_alpha/runtime",
     "src/market_regime_alpha/market",

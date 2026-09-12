@@ -102,6 +102,8 @@ class SelectionRepository(Protocol):
         assessment_count: int,
     ) -> None: ...
 
+    def require_ordinary_universe_scope(self, universe_revision_id: UUID) -> None: ...
+
     def require_exploratory_retrospective_universe_scope(
         self,
         universe_revision_id: UUID,

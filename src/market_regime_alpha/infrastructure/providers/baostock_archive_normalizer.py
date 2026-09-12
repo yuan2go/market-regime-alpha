@@ -378,8 +378,12 @@ class BaoStockArchiveNormalizer:
             classification_memberships=tuple(memberships),
         )
 
+    @property
+    def _price_basis(self) -> PriceBasis:
+        return PriceBasis.RAW_UNADJUSTED
+
     def _normalize_bars(self, capture: ProviderCapture, envelope: _Envelope) -> NormalizationBatch:
-        is_daily = envelope.query.kind is BaoStockArchiveQueryKind.HISTORY_DAILY_RAW
+        is_daily = envelope.query.kind in {BaoStockArchiveQueryKind.HISTORY_DAILY_RAW, BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED}
         required = (
             (
                 "date", "code", "open", "high", "low", "close", "volume",
@@ -406,8 +410,9 @@ class BaoStockArchiveNormalizer:
         )
         expected_by_date = {item.session_date: item for item in expected_sessions}
         for row in rows:
-            if row["adjustflag"] != "3":
-                raise ValueError("archive bar must preserve RAW_UNADJUSTED price basis")
+            expected_flag = "1" if self._price_basis is PriceBasis.BACKWARD_ADJUSTED else "3"
+            if row["adjustflag"] != expected_flag:
+                raise ValueError("archive bar must preserve RAW_UNADJUSTED price basis" if expected_flag == "3" else "archive bar must preserve BACKWARD_ADJUSTED price basis")
             query_code = envelope.query.code
             if query_code is None or row["code"] != query_code:
                 raise ValueError("bar row code differs from the frozen query")
@@ -527,7 +532,7 @@ class BaoStockArchiveNormalizer:
                         instrument_id=a_share_instrument_id(row["code"]),
                         session_id=session.session_id,
                         timeframe=timeframe,
-                        price_basis=PriceBasis.RAW_UNADJUSTED,
+                        price_basis=self._price_basis,
                         event_start=event_start,
                         event_end=event_end,
                     )
@@ -546,7 +551,7 @@ class BaoStockArchiveNormalizer:
                     instrument_id=a_share_instrument_id(row["code"]),
                     session_id=session.session_id,
                     timeframe=timeframe,
-                    price_basis=PriceBasis.RAW_UNADJUSTED,
+                    price_basis=self._price_basis,
                     event_start=event_start,
                     event_end=event_end,
                     revision=revision,
@@ -747,10 +752,10 @@ class BaoStockArchiveNormalizer:
             fact_kind=GapFactKind.MARKET_BAR,
             instrument_fact_kind=None,
             timeframe=timeframe,
-            price_basis=PriceBasis.RAW_UNADJUSTED,
+            price_basis=self._price_basis,
             event_start=event_start,
             event_end=event_end,
-            detail="BaoStock row cannot establish a legal canonical raw bar",
+            detail=("BaoStock row cannot establish a legal canonical raw bar" if self._price_basis is PriceBasis.RAW_UNADJUSTED else "BaoStock row cannot establish a legal canonical backward-adjusted bar"),
         )
 
     @staticmethod
@@ -796,3 +801,55 @@ __all__ = [
     "a_share_instrument_id",
     "a_share_session_id",
 ]
+
+
+class BaoStockHistoricalNormalizer(BaoStockArchiveNormalizer):
+    """Strict new historical requests; legacy normalizer bytes keep their contract."""
+    contract = NormalizerContract(implementation="market.baostock_historical", version="1",
+        implementation_sha256="fa316c2dcd9eeb8848d3f225fcffbe3635f3dcba5c122b83e58a9c60564c8cf4")
+
+    def normalize(self, capture: ProviderCapture, content: bytes) -> NormalizationBatch:
+        envelope = self._decode(content)
+        if envelope.query != self._expected_query:
+            raise ValueError("historical payload differs from its exact frozen request")
+        if envelope.query.kind is BaoStockArchiveQueryKind.TRADE_DATES:
+            rows = self._row_dicts(envelope, ("calendar_date", "is_trading_day"))
+            observed = [date.fromisoformat(row["calendar_date"]) for row in rows]
+            if any(row["is_trading_day"] not in {"0", "1"} for row in rows) or len(observed) != len(set(observed)):
+                raise ValueError("historical Calendar is duplicated or contains an unknown day status")
+            query = envelope.query
+            assert query.start_date is not None and query.end_date is not None
+            expected = {query.start_date + timedelta(days=i) for i in range((query.end_date-query.start_date).days+1)}
+            if set(observed) != expected:
+                raise ValueError("historical Calendar does not cover the exact requested dates")
+        if envelope.query.kind is BaoStockArchiveQueryKind.STOCK_BASIC:
+            rows = self._row_dicts(envelope, ("code",))
+            if len(rows) > 1 or any(row["code"] != envelope.query.code for row in rows):
+                raise ValueError("historical security master differs from the exact requested code")
+        return super().normalize(capture, content)
+
+    def _expected_sessions(self, **kwargs) -> tuple[ArchiveTradingSession, ...]:
+        sessions = super()._expected_sessions(**kwargs)
+        dates = tuple(s.session_date for s in sessions)
+        if dates != tuple(sorted(set(dates))) or any(
+            s.exchange != kwargs["exchange"] or not kwargs["start_date"] <= s.session_date <= kwargs["end_date"] for s in sessions
+        ):
+            raise ValueError("historical Calendar reader returned an inexact session roster")
+        return sessions
+
+
+class BaoStockAdjustedDailyNormalizer(BaoStockHistoricalNormalizer):
+    """Explicit publisher-adjusted history, with actual capture time and no PIT claim."""
+    contract = NormalizerContract(
+        implementation="market.baostock_adjusted_daily", version="1",
+        implementation_sha256="214655e1c4dffa4a1c13f8e83f9143b8bc0cbc9e996e65fa1f729948e4dcb5bc")
+
+    @property
+    def _price_basis(self) -> PriceBasis:
+        return PriceBasis.BACKWARD_ADJUSTED
+
+    def normalize(self, capture: ProviderCapture, content: bytes) -> NormalizationBatch:
+        envelope = self._decode(content)
+        if envelope.query.kind is not BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED or envelope.query != self._expected_query:
+            raise ValueError("adjusted history requires the exact frozen backward-adjusted query")
+        return self._normalize_bars(capture, envelope)

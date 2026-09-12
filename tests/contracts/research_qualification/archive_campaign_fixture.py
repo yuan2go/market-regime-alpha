@@ -53,7 +53,8 @@ from tests.contracts.research_qualification import (
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
-def seed_complete_archive(application, *, episode_entry=False, multi_episode=False, daily_bars=False):
+def seed_complete_archive(application, *, episode_entry=False, multi_episode=False, daily_bars=False, archive_exchange="SSE", mixed_daily_bars=False, all_session_facts=False):
+    from market_regime_alpha.market.domain.archive import ArchiveSupplementalPriceBasis
     provider = Provider(
         uuid4(),
         "wp17p_fixture",
@@ -107,7 +108,7 @@ def seed_complete_archive(application, *, episode_entry=False, multi_episode=Fal
         session_dates = tuple(date(2026, month, day) for month, day in ((1, 26), (1, 27), (1, 28), (1, 29), (1, 30), (2, 2), (2, 3), (2, 4)))
         decision_dates = tuple(date(2026, month, day) for month, day in ((1, 26), (1, 28), (1, 29), (1, 30), (2, 3)))
         outcome_dates = tuple(date(2026, month, day) for month, day in ((1, 27), (1, 29), (1, 30), (2, 2), (2, 4)))
-    fact_dates = session_dates if multi_episode else decision_dates
+    fact_dates = session_dates if multi_episode or all_session_facts else decision_dates
 
     def fixture_bar(product_id, capture_id, instrument_id, session, checkpoint, index):
         from dataclasses import replace
@@ -272,7 +273,8 @@ def seed_complete_archive(application, *, episode_entry=False, multi_episode=Fal
                 daily.append(replace(bar,bar_revision_id=uuid4(),timeframe=BarTimeframe.DAILY,
                     event_start=session.open_at,event_end=session.close_at,open=Money(Decimal(10),"CNY"),
                     close=Money(value,"CNY"),high=Money(Decimal(11),"CNY"),low=Money(Decimal(9),"CNY")))
-        batch=replace(batch,bars=(*batch.bars,*daily))
+        adjusted=tuple(replace(bar,bar_revision_id=uuid4(),price_basis=PriceBasis.BACKWARD_ADJUSTED) for bar in daily) if mixed_daily_bars else ()
+        batch=replace(batch,bars=(*batch.bars,*daily,*adjusted))
     if episode_entry:
         from dataclasses import replace
         entry_bars = []
@@ -307,9 +309,9 @@ def seed_complete_archive(application, *, episode_entry=False, multi_episode=Fal
             f"wp17p-fixture-{archive_id.hex[:10]}",
             ArchiveLane.RETROSPECTIVE_BACKFILL,
             product.provider_product_id,
-            "SSE",
-            BarTimeframe.MINUTE_5,
-            PriceBasis.RAW_UNADJUSTED,
+            archive_exchange,
+            BarTimeframe.DAILY if mixed_daily_bars else BarTimeframe.MINUTE_5,
+            ArchiveSupplementalPriceBasis.MIXED_EXPLICIT if mixed_daily_bars else PriceBasis.RAW_UNADJUSTED,
             "ENGINEERING_EXPLORATORY_PILOT_32",
             canonical_json_sha256(tuple(str(item) for item in instrument_ids)),
             sessions[0].open_at,

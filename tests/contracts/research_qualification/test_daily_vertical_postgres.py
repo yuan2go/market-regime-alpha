@@ -23,7 +23,15 @@ def test_generic_daily_target_fit_model_validation_and_replay(target_database_ur
         identity = app.evidence.inventory()["database"]
         with prospective_operation_session(target_database_url, database_name=identity["name"], database_oid=identity["oid"], cluster_identity=identity["cluster_identity"], series_code="daily-fixture"):
             with backtest_research_admission(backtest_run_id=spec.exploratory_backtest_run_id, specification_sha256=str(frozen.specification_sha256)):
-                result = app.backtest_execution.run(frozen)
+                from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestExecutionBudget
+                partial = app.backtest_execution.run(frozen, budget=BacktestExecutionBudget(maximum_actions=1))
+                assert partial.execution_state.value != "COMPLETED"
+                assert app.backtest_execution.last_invocation.stop_reason == "BUDGET_REACHED"
+                # A fresh composition reloads the frozen plan and canonical owner
+                # evidence. There is no in-memory continuation cursor.
+                with bootstrap_application(settings) as restored:
+                    result = restored.backtest_execution.resume(
+                        restored.backtest_specifications.load(spec.exploratory_backtest_run_id))
         assert result.execution_state.value == "COMPLETED", result
         assert app.backtest_replay.verify(spec.exploratory_backtest_run_id).matched
         report = app.backtest_reports.render_json(spec.exploratory_backtest_run_id)
@@ -984,3 +992,32 @@ def _assert_fresh_daily_restore(app, settings, plan, tmp_path):
     finally:
         with psycopg.connect(settings.database_url, autocommit=True) as connection:
             connection.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(name)))
+
+
+def test_empty_backtest_population_is_persisted_with_exact_calendar_source(target_database_url, tmp_path):
+    from dataclasses import replace
+    from decimal import Decimal
+    from uuid import uuid4
+    from market_regime_alpha.research_qualification.domain.backtest import AuthorityBinding
+    from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestExecutionBudget
+    settings = TargetSettings(target_database_url, tmp_path / "artifacts")
+    bootstrap_database(settings)
+    with bootstrap_application(settings) as app:
+        spec, catalog = daily_baseline(app)
+        original = catalog["eligibility"]
+        policy = replace(original, eligibility_policy_id=uuid4(), policy_code="empty_research_population",
+            rules=(replace(original.rules[0], eligibility_rule_id=uuid4(), threshold_decimal=Decimal(1000000)),))
+        app.selection.register_eligibility_policy(policy, _context("empty-policy"))
+        spec = replace(spec, eligibility_policy=AuthorityBinding(policy.eligibility_policy_id, str(policy.content_sha256)))
+        app.backtests.predeclare(spec, _context("empty-predeclare"))
+        frozen = app.backtest_specifications.load(spec.exploratory_backtest_run_id)
+        app.backtest_execution.run(frozen, budget=BacktestExecutionBudget(maximum_actions=1))
+        assert app.backtest_execution.last_invocation.stop_reason == "BUDGET_REACHED"
+        with app._pool.connection(read_only=True) as connection:
+            rows = connection.execute("""SELECT dataset.row_count, source.source_role, source.market_trading_session_id
+                FROM mra.exploratory_backtest_dataset binding JOIN mra.dataset dataset USING(dataset_id)
+                JOIN mra.dataset_source source USING(dataset_id)
+                WHERE binding.exploratory_backtest_run_id=%s AND source.source_role='MARKET_TRADING_SESSION'""",
+                (spec.exploratory_backtest_run_id,)).fetchall()
+        assert len(rows) == 1 and rows[0][0] == 0
+        assert rows[0][2] in {s.trading_session_id for f in spec.folds for s in f.sessions}

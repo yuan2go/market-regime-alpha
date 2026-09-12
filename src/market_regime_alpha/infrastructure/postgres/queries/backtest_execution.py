@@ -227,10 +227,11 @@ class PostgresBacktestExecutionObservationPort:
                 ).fetchall()
                 decisions = cursor.execute(
                     """
-                    SELECT decision_run_id, exploratory_backtest_arm_id,
+                    SELECT backtest.decision_run_id, exploratory_backtest_arm_id,
                            exploratory_backtest_fold_id,
-                           exploratory_backtest_fold_session_id
-                    FROM mra.exploratory_retrospective_decision_run
+                           exploratory_backtest_fold_session_id, decision.commitment_count
+                    FROM mra.exploratory_retrospective_decision_run backtest
+                    JOIN mra.decision_run decision USING(decision_run_id)
                     WHERE exploratory_backtest_run_id = %s
                     """ + cell_filter.format(owner=""),
                     cell_parameters,
@@ -418,6 +419,7 @@ class PostgresBacktestExecutionObservationPort:
                     action,
                     decision_by_scope,
                     outcome_by_scope,
+                    empty_runtime_recorded=bool(runtime_by_action.get(action.action_id)),
                 )
             elif action.kind in {
                 BacktestActionKind.COMPLETE_FOLD_EVALUATION,
@@ -485,6 +487,7 @@ class PostgresBacktestExecutionObservationPort:
         action: BacktestExpectedAction,
         decisions: dict[_Scope, list[dict[str, Any]]],
         outcomes: dict[_Scope, list[dict[str, Any]]],
+        *, empty_runtime_recorded: bool = False,
     ) -> BacktestActionObservation:
         scope = _scope(action)
         decision_rows = decisions.get(scope, ())
@@ -494,6 +497,11 @@ class PostgresBacktestExecutionObservationPort:
                 (BacktestObservedState.ABSENT if not decision_rows else BacktestObservedState.MISMATCH),
             )
         rows = outcomes.get(scope, ())
+        if not rows and decision_rows[0].get("commitment_count") == 0:
+            if not empty_runtime_recorded:
+                return BacktestActionObservation(action.action_id,BacktestObservedState.ABSENT)
+            verified=self._decisions.verify(UUID(str(decision_rows[0]["decision_run_id"])))
+            return BacktestActionObservation(action.action_id,BacktestObservedState.MATCHED_COMPLETE if verified.matched else BacktestObservedState.MISMATCH)
         if rows and all(row["market_target_outcome_revision_id"] is None for row in rows):
             return BacktestActionObservation(action.action_id, BacktestObservedState.ABSENT)
         if not rows or any(row["market_target_outcome_revision_id"] is None for row in rows):

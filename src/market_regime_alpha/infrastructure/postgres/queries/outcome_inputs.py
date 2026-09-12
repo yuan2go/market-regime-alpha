@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -56,8 +56,8 @@ _MINUTE_WIDTHS = {
 class PostgresOutcomeInputPreparationProvider:
     """Resolve exact Target, commitment, Session, and Market revisions."""
 
-    def __init__(self, pool: TargetPostgresPool) -> None:
-        self._pool = pool
+    def __init__(self, pool: TargetPostgresPool, *, holdout_integrity: Callable[..., None] | None = None) -> None:
+        self._pool, self._holdout_integrity = pool, holdout_integrity
 
     def prepare(
         self,
@@ -88,6 +88,8 @@ class PostgresOutcomeInputPreparationProvider:
         *,
         exploratory_retrospective: bool,
     ) -> PreparedOutcomeInputs:
+        if self._holdout_integrity is not None:
+            self._holdout_integrity(commitment_id=request.commitment_id)
         with self._pool.connection(read_only=True) as connection:
             runtime = _load_runtime(connection, runtime_claim)
             retrospective_scope = (
@@ -118,6 +120,7 @@ class PostgresOutcomeInputPreparationProvider:
                 knowledge_cutoff=request.knowledge_cutoff,
             )
             due_at = _due_at(target, sessions)
+            connection.execute("SELECT mra.require_backtest_holdout_access(%s,%s)", (request.commitment_id, due_at))
             is_due = request.observation_cutoff >= due_at
             sources = (
                 _load_sources(
@@ -183,6 +186,8 @@ class PostgresOutcomeDependencyRepository:
             target=target,
             knowledge_cutoff=prepared.knowledge_cutoff,
         )
+        self._connection.execute("SELECT mra.require_backtest_holdout_access(%s,%s)",
+            (prepared.commitment.commitment_id, _due_at(target, sessions)))
         sources = (
             _load_sources(
                 self._connection,

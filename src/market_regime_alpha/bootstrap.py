@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from market_regime_alpha.infrastructure.postgres.queries.historical_acquisition import PostgresHistoricalAcquisitionSources
 from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
+from market_regime_alpha.infrastructure.postgres.queries.historical_features import PostgresHistoricalFeatureInputReadPort
+from market_regime_alpha.infrastructure.postgres.queries.historical_inventory import PostgresHistoricalInventory
+from market_regime_alpha.infrastructure.historical_features import HistoricalBacktestFeatureAdapter
 from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
 from market_regime_alpha.infrastructure.postgres.queries.calendar_continuity import PostgresCalendarContinuityReads
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations
@@ -23,6 +27,7 @@ from market_regime_alpha.infrastructure.artifacts.evidence import FilesystemEvid
 from market_regime_alpha.infrastructure.postgres.evidence_backup import PostgresEvidenceBackup
 from market_regime_alpha.infrastructure.postgres.queries.evidence import PostgresEvidenceSnapshotPort
 from market_regime_alpha.runtime.application.evidence import EvidenceApplication
+from market_regime_alpha.infrastructure.models.research_baselines import ResearchBaselineTrainer, ResearchBaselinePredictor, ResearchBaselineBacktestAdapter
 from market_regime_alpha.infrastructure.models import (
     DeterministicRidgeBacktestModelAdapter,
     DeterministicRidgePredictor,
@@ -187,6 +192,10 @@ from market_regime_alpha.infrastructure.postgres.operational_diagnostics import 
 from market_regime_alpha.infrastructure.postgres.queries.backtest_diagnostics import PostgresBacktestDiagnosticsSourcePort
 from market_regime_alpha.infrastructure.postgres.queries.prospective_health import PostgresProspectiveHealthReadPort
 from market_regime_alpha.research_qualification.application.backtest_diagnostics import BacktestDiagnosticsApplication
+from market_regime_alpha.research_qualification.application.historical_comparison import HistoricalComparisonApplication
+from market_regime_alpha.infrastructure.postgres.queries.historical_comparison import PostgresHistoricalComparisonInputs
+from market_regime_alpha.infrastructure.postgres.queries.backtest_holdout import PostgresBacktestHoldoutReadPort
+from market_regime_alpha.research_qualification.application.backtest_holdout import BacktestHoldoutApplication
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
     PostgresBacktestQueryPort,
 )
@@ -346,6 +355,8 @@ class TargetApplication:
     evidence: EvidenceApplication
     operational_diagnostics: PostgresOperationalDiagnostics
     backtest_diagnostics: BacktestDiagnosticsApplication
+    historical_comparison: HistoricalComparisonApplication
+    backtest_holdouts: BacktestHoldoutApplication
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
@@ -353,6 +364,8 @@ class TargetApplication:
     archive_operations: MarketArchiveOperations
     prospective_archives: ProspectiveArchiveRuntimeApplication
     archive_inspection: ArchiveInspectionPort
+    historical_acquisition_sources: PostgresHistoricalAcquisitionSources
+    historical_inventory: PostgresHistoricalInventory
     archive_acquisition_readiness: PostgresArchiveAcquisitionReadinessReads
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
@@ -468,12 +481,13 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
         id_factory=uuid4,
         outcome_prices=PostgresOutcomeQueryProvider(pool),
+        holdout_integrity=PostgresBacktestHoldoutReadPort(pool, byte_store).verify_evaluation_artifacts,
     )
     model_trainers = ExplicitModelTrainerComposition(
-        (DeterministicRidgeTrainer(),)
+        (DeterministicRidgeTrainer(), ResearchBaselineTrainer())
     )
     model_predictors = ExplicitModelPredictorComposition(
-        (DeterministicRidgePredictor(),)
+        (DeterministicRidgePredictor(), ResearchBaselinePredictor())
     )
     model_training_inputs = PostgresModelTrainingInputProvider(pool, byte_store)
     research_model_application = ResearchModelApplication(
@@ -535,7 +549,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresRiskQueryProvider(pool),
     )
     outcome_application = OutcomeApplication(
-        PostgresOutcomeInputPreparationProvider(pool),
+        PostgresOutcomeInputPreparationProvider(pool, holdout_integrity=PostgresBacktestHoldoutReadPort(pool, byte_store).verify_artifacts),
         PostgresOutcomeUnitOfWorkProvider(pool),
         PostgresOutcomeQueryProvider(pool),
     )
@@ -556,6 +570,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         feature_materializers=(
             IntradayMoveBacktestFeatureAdapter(PostgresExploratoryFeatureInputReadPort(pool)),
             DailyMoveBacktestFeatureAdapter(PostgresDailyFeatureInputReadPort(pool, byte_store)),
+            HistoricalBacktestFeatureAdapter(PostgresHistoricalFeatureInputReadPort(pool, byte_store)),
         ),
         worker_id="generic-backtest-worker",
         candidates=candidate_application,
@@ -571,7 +586,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         research_experiments=experiment_commands,
         research_evaluations=evaluation_commands,
         research_models=research_model_application,
-        model_adapters=(DeterministicRidgeBacktestModelAdapter(),),
+        model_adapters=(DeterministicRidgeBacktestModelAdapter(), ResearchBaselineBacktestAdapter()),
         backtests=backtest_application,
         runtime=runtime_application,
     )
@@ -582,9 +597,11 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         handler=backtest_action_handler,
         worker_id="generic-backtest-worker",
     )
+    holdout_queries = PostgresBacktestHoldoutReadPort(pool, byte_store)
     backtest_execution = BacktestExecutor(
         backtest_observations,
         backtest_action_executor,
+        execution_blockers=holdout_queries.execution_blockers,
     )
     backtest_replay = BacktestReplayApplication(
         PostgresBacktestAuthorityQueryPort(pool),
@@ -595,6 +612,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresBacktestReportSourcePort(pool),
         backtest_replay,
     )
+    historical_comparison = HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool), backtest_reports,
+        PostgresBacktestDiagnosticsSourcePort(pool), backtest_specifications)
+    backtest_holdouts = BacktestHoldoutApplication(PostgresBacktestUnitOfWorkProvider(pool), holdout_queries,
+        backtest_specifications, historical_comparison, artifact_application, byte_store, id_factory=uuid4)
     def verify_daily_evidence() -> dict[str, Any]:
         from market_regime_alpha.interfaces.daily_health import daily_health
         return daily_health(application, complete_history=True, replay=True)
@@ -606,6 +627,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_diagnostics=BacktestDiagnosticsApplication(
             PostgresBacktestDiagnosticsSourcePort(pool), backtest_reports,
         ),
+        historical_comparison=historical_comparison,
+        backtest_holdouts=backtest_holdouts,
         evidence=EvidenceApplication(
             PostgresEvidenceSnapshotPort(pool),
             FilesystemEvidenceIntegrity(settings.artifact_root),
@@ -637,6 +660,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             admission_scope=prospective_series_admission,
         ),
         archive_inspection=PostgresArchiveInspectionPort(pool),
+        historical_acquisition_sources=PostgresHistoricalAcquisitionSources(pool),
+        historical_inventory=PostgresHistoricalInventory(pool, byte_store),
         archive_acquisition_readiness=PostgresArchiveAcquisitionReadinessReads(pool, byte_store),
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),

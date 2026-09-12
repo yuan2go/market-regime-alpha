@@ -18,6 +18,20 @@ def _hash(value: ContentHash | str) -> ContentHash:
     return value if isinstance(value, ContentHash) else ContentHash(value)
 
 
+class ArchiveSupplementalPriceBasis(StrEnum):
+    """Archive inventory only; never a legal price basis for an individual bar."""
+    MIXED_EXPLICIT = "MIXED_EXPLICIT"
+
+
+ArchivePriceBasis = PriceBasis | ArchiveSupplementalPriceBasis
+
+
+def parse_archive_price_basis(value: str) -> ArchivePriceBasis:
+    if value == ArchiveSupplementalPriceBasis.MIXED_EXPLICIT.value:
+        return ArchiveSupplementalPriceBasis.MIXED_EXPLICIT
+    return PriceBasis(value)
+
+
 class ArchiveLane(StrEnum):
     RETROSPECTIVE_BACKFILL = "RETROSPECTIVE_BACKFILL"
     PROSPECTIVE_CONTEMPORANEOUS = "PROSPECTIVE_CONTEMPORANEOUS"
@@ -122,7 +136,7 @@ class MarketArchive:
     provider_product_id: UUID
     exchange_code: str
     timeframe: BarTimeframe
-    price_basis: PriceBasis
+    price_basis: ArchivePriceBasis
     instrument_scope: str
     instrument_scope_sha256: ContentHash | str
     event_window_start: datetime
@@ -145,8 +159,10 @@ class MarketArchive:
             raise TypeError("lane must be ArchiveLane")
         if not isinstance(self.timeframe, BarTimeframe):
             raise TypeError("timeframe must be BarTimeframe")
-        if not isinstance(self.price_basis, PriceBasis):
-            raise TypeError("price_basis must be PriceBasis")
+        if not isinstance(self.price_basis, (PriceBasis, ArchiveSupplementalPriceBasis)):
+            raise TypeError("price_basis must be an explicit Archive price basis")
+        if self.price_basis is ArchiveSupplementalPriceBasis.MIXED_EXPLICIT and self.lane is not ArchiveLane.RETROSPECTIVE_BACKFILL:
+            raise ValueError("mixed price inventories are retrospective research only")
         if not re.fullmatch(r"[A-Z][A-Z0-9]{1,15}", self.exchange_code):
             raise ValueError("exchange_code has an invalid format")
         if not self.instrument_scope or len(self.instrument_scope) > 200:
