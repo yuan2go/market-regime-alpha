@@ -14,6 +14,10 @@ Use the returned `mra backtest run --run-id` and `mra backtest resume --run-id`
 entries for execution and recovery, then the existing report and replay commands.
 Use persistent research storage, with a separate disposable test database.
 The static roster is a Selection declaration, not dated Market membership.
+It requires the Provider's Instrument capability and the exact sealed Archive
+instrument bindings; classification capability is required only for classified
+universes. Static members keep missing membership evidence and remain barred
+from ordinary/prospective Selection.
 It is marked `STATIC_RESEARCH_ROSTER` / `SURVIVORSHIP_LIMITED_V1`; ordinary
 Eligibility and Dataset paths reject its retrospective scope. The registered
 `static_research_universe_v9` upgrade adds deferred constraints; use the exact

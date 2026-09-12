@@ -170,7 +170,12 @@ class PostgresSelectionRepository:
             raise RuntimeNotFoundError(f"Universe {universe_id} does not exist")
         product = self._provider_product(scope.market_provider_product_id)
         fact_kinds = set(product[0])
-        required = {"INSTRUMENT", "CLASSIFICATION", "CLASSIFICATION_MEMBERSHIP"}
+        from market_regime_alpha.selection.domain.model import STATIC_RESEARCH_SCHEME
+        # Static research is a declared roster, never a Provider classification.
+        # Its caller still requires exact sealed identifiers and retrospective
+        # scope before committing any members.
+        required = ({"INSTRUMENT"} if scope.classification_scheme==STATIC_RESEARCH_SCHEME
+                    else {"INSTRUMENT", "CLASSIFICATION", "CLASSIFICATION_MEMBERSHIP"})
         if not required.issubset(fact_kinds):
             raise RuntimeStateConflictError("Universe scope provider product lacks canonical classification capabilities")
         artifact = self._connection.execute(
