@@ -42,6 +42,7 @@ def _revision():
     previous = load_validity_protocol(2)
     protocol = deepcopy(previous)
     protocol.update(protocol_version=3, protocol_id="synthetic-capacity-revision", predecessor=previous["protocol_sha256"],
+                    cohort_end_exclusive=None,
                     declared_at="2026-09-11T00:50:00+08:00", first_eligible_future_session="2026-09-15",
                     first_eligible_target_start="2026-09-15T09:30:00+08:00", first_eligible_target_session_id=str(UUID(int=1234)),
                     capacity_policy={"downtime_buffer_sessions": 10, "missing_observation_buffer_fraction": "0.20",
@@ -53,6 +54,8 @@ def _revision():
 
 def test_short_calendar_and_short_model_lifetime_are_distinct_failures():
     protocol = load_validity_protocol(2)
+    # A synthetic unbounded capacity scenario, never a declared report protocol.
+    protocol['cohort_end_exclusive'] = None
     calendar = _calendar((date(2026, 9, 14), date(2026, 9, 15), date(2026, 9, 16), date(2026, 9, 17)))
     use = _use(protocol, expires=datetime(2026, 9, 18, 8, tzinfo=timezone.utc))
     short = cohort_capacity(protocol, calendar, use, observed_at=NOW)
@@ -72,6 +75,8 @@ def test_short_calendar_and_short_model_lifetime_are_distinct_failures():
 
 def test_capacity_does_not_fill_sparse_calendar_gaps_with_weekdays():
     protocol = load_validity_protocol(2)
+    # Preserve the sparse-calendar scenario independently of real v2 closure.
+    protocol['cohort_end_exclusive'] = None
     days = (date(2026, 9, 14), date(2026, 9, 24), date(2026, 10, 29), date(2026, 12, 31))
     calendar = _calendar(days)
     result = cohort_capacity(protocol, calendar, _use(protocol), observed_at=NOW, calendar_coverage_witness=_witness(calendar))

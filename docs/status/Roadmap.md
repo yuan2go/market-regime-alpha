@@ -130,6 +130,46 @@ fires need continuing observation; the 120-second budget is unchanged.
 
 ## Operational reliability and cohort lifecycle execution
 
+### Authorized successor activation execution
+
+The Model-use rollover and Validity v3 activation starts from exact main
+`cc12b9e469b1e482595e6290a8d137d9cbaf6817`. The user explicitly authorized
+one exact-database local peer owner-maintenance window. Root execution owns all
+live changes; independent reviews cover the maintenance boundary and read-only
+cohort reporting. Model, Feature, Target, baseline, population and 20/500 floors
+remain frozen.
+
+- [x] Isolate the checkout and reload current installation, original database,
+  frozen Predictions, old Use, calendar, protocols, HBA and closed runtime ACL.
+  Preserve the actual 19:00 backup restart Provider-access failure.
+- [x] Preserve the stopped-service fact, take a fresh verified backup and
+  second-device mirror, then register exactly the prepared successor through
+  Model owner with future validity and unchanged semantics.
+- [x] Restore exact HBA bytes/mode/owner, reload, prove owner login rejected and
+  full runtime privilege projection unchanged before any v3 declaration.
+- [x] Reload successor owner truth, verify possible and buffered calendar
+  capacity, then freeze v3 with the real declaration clock and future-only cohort.
+- [x] Prepare the same-wheel daily-template handoff, preserve all existing old
+  publications, activate once and inspect complete ticks plus original replay.
+- [x] Run directed ownership/cohort/guard/CLI tests, static/build/install and
+  documentation checks; publish source-bound evidence with independent gates.
+
+Sep-11 already completed under its old frozen Use at entry. Sep-14 is already
+published under that Use and remains its pending work. Successor v3 cannot
+reclassify either session. Two completed days are still below sustained proof
+and validity sample floors; no Alpha iteration is authorized.
+
+The activation gate is YES at the bounded Sep-11 22:39+08 cutoff. Successor
+`3a426d5f-702f-56fb-9563-0bc6256b558c`, restored HBA/runtime ACL, future-only v3,
+72-session possible capacity and 62-session buffered capacity are verified.
+Five real post-activation ticks and unchanged Sep-10/Sep-11 replay pass. Continue
+natural v3 accumulation from Sep-15. The actual 19:00 scheduled restart failure
+and late-entered 60-second window remain independent reliability follow-ups;
+neither is upgraded by the manual activation PASS. See the
+[activation evidence](../archive/Model-Use-Rollover-Validity-V3-Activation-2026-09-11.md).
+
+### Previous reliability package cutoff
+
 The authorized baseline is main `09917b6e7072dfc66f172bde3ef504cff511ae2c`.
 The original database, restricted service, published Predictions and immutable
 v1/v2 protocols retain their identities. No Model/Feature/Target/Candidate/baseline

@@ -22,8 +22,9 @@ from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 _PROTOCOL_HASHES = {
     1: "1414d39ab1082fffb1e45499c1ba2d93b1e54a442f58fe7a3cc68509d69c6944",
     2: "efb4b9683ccf6201b9c1e3cbe0eb32338559fc430756155b06374794ffdb52de",
+    3: "39106ff7c6d1742761f73ceba937b99b21092a76ab136f0e2fe7ec2aa16fc53f",
 }
-CURRENT_PROTOCOL_VERSION = 2
+CURRENT_PROTOCOL_VERSION = 3
 
 
 def instant(value: Any) -> datetime:
