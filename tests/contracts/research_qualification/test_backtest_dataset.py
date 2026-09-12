@@ -56,6 +56,20 @@ def _feature(value: int, code: str) -> FeatureDefinition:
     )
 
 
+def test_empty_population_retains_real_calendar_lineage_without_inventing_a_row():
+    feature = _feature(10, "intraday_move")
+    materialized = materialize_backtest_dataset(dataset_id=_id(30), dataset_code="empty_calendar_bound",
+        simulated_decision_time=datetime(2026, 1, 5, 7, 0, tzinfo=UTC), universe_revision_id=_id(31),
+        eligibility_policy_id=_id(32), feature_definition_ids=(feature.feature_definition_id,),
+        code_artifact=_artifact(33), config_artifact=_artifact(34), members=(), empty_population_session_id=_id(36))
+    artifact = ArtifactBinding(_id(35), sha256_bytes(materialized.manifest_content), len(materialized.manifest_content))
+    parsed = parse_decision_input_dataset_manifest(materialized.manifest_content,
+        dataset=materialized.definition(artifact), feature_definitions=(feature,))
+    assert materialized.row_count == materialized.available_cell_count == materialized.unavailable_cell_count == 0
+    assert len(parsed.sources) == 2
+    assert any(source.market_trading_session_id == _id(36) for source in parsed.sources)
+
+
 def test_generic_materializer_freezes_multiple_typed_feature_cells() -> None:
     features = (_feature(10, "intraday_move"), _feature(11, "intraday_range"))
     members = (

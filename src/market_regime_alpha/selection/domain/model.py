@@ -19,6 +19,8 @@ from market_regime_alpha.shared.identity import ContentHash, InstrumentId
 
 
 _CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,99}$")
+STATIC_RESEARCH_SCHEME = "STATIC_RESEARCH_ROSTER"
+STATIC_RESEARCH_LIMITATION = "SURVIVORSHIP_LIMITED_V1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +63,8 @@ class UniverseScopeSpecification:
             raise ValueError("classification_scheme has an invalid format")
         if not self.classification_code:
             raise ValueError("classification_code is required")
+        if self.classification_scheme == STATIC_RESEARCH_SCHEME and self.classification_code != STATIC_RESEARCH_LIMITATION:
+            raise ValueError("static research roster requires its explicit survivorship limitation")
         instruments = tuple(InstrumentId.parse(item) for item in self.instrument_ids)
         if instruments != tuple(sorted(set(instruments), key=lambda item: str(item))):
             raise ValueError("scope instrument_ids must be unique and sorted")

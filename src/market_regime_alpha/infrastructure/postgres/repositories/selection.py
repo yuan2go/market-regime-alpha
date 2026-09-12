@@ -433,6 +433,19 @@ class PostgresSelectionRepository:
             ),
         )
 
+    def require_ordinary_universe_scope(self, universe_revision_id: UUID) -> None:
+        row = self._connection.execute(
+            """SELECT revision.classification_scheme,
+                      EXISTS (SELECT 1 FROM mra.exploratory_retrospective_universe_revision scope
+                              WHERE scope.universe_revision_id=revision.universe_revision_id)
+               FROM mra.universe_revision revision WHERE revision.universe_revision_id=%s
+               FOR SHARE OF revision""", (universe_revision_id,),
+        ).fetchone()
+        if row is None:
+            raise RuntimeNotFoundError("Eligibility Universe does not exist")
+        if row[0] == "STATIC_RESEARCH_ROSTER" or row[1]:
+            raise RuntimeStateConflictError("retrospective Universe requires retrospective Eligibility")
+
     def require_exploratory_retrospective_universe_scope(
         self,
         universe_revision_id: UUID,

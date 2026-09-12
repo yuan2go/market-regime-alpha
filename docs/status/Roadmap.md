@@ -75,7 +75,7 @@ Initial boundaries, before any new holdout result is read:
 | New source changes many variables | Market provider contracts and comparison: same facts/features/frozen model/labels/Evaluation, explicit units/time/adjustment/finality, local recorded response verification |
 | Packaging or documentation drift | Locked dependencies, focused owner regression, inventory/docs/static gates, independent installed wheel CLI and report/replay |
 
-- [ ] Owner/physical data inventory, persistent scope and frozen pilot protocol.
+- [x] Owner/physical data inventory, persistent scope and frozen pilot protocol.
 - [ ] Real small-sample daily Backtest/Model/Outcome/Evaluation/report and resume.
 - [ ] Bounded historical expansion and explicit ten-feature calculations.
 - [ ] Protected holdout, finite candidate plans, baseline and ablation execution.

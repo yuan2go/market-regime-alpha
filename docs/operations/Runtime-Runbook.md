@@ -13,6 +13,24 @@ study metadata and predeclares a canonical Backtest; it does not execute one.
 Use the returned `mra backtest run --run-id` and `mra backtest resume --run-id`
 entries for execution and recovery, then the existing report and replay commands.
 Use persistent research storage, with a separate disposable test database.
+The static roster is a Selection declaration, not dated Market membership.
+It is marked `STATIC_RESEARCH_ROSTER` / `SURVIVORSHIP_LIMITED_V1`; ordinary
+Eligibility and Dataset paths reject its retrospective scope. The registered
+`static_research_universe_v9` upgrade adds deferred constraints; use the exact
+research database backup and `db upgrade-plan`/`db upgrade-apply` before running
+this package against an existing v8 research database. Never upgrade the operating
+scope under historical research authorization.
+
+Use `backtest run` or `resume` with `--maximum-actions 20 --maximum-seconds 300`
+for bounded invocations. Actions finish their existing atomic owner work before
+draining; the response retains the complete pending action roster, stop reason,
+action time and reconciliation time. Limits are positive (at most 100,000 actions
+and 7,200 seconds); omitted companion limits default to 100,000 / 3,600.
+Omitting both flags preserves the original response and execution behavior.
+Resume reloads the original frozen specification and rechecks owner evidence;
+terminal failures require a new declaration, while completed actions are reused.
+Empty populations retain zero rows and exact Calendar lineage in the versioned
+empty Dataset manifest; they are never filled with synthetic observations.
 This finite baseline entry is exploratory; it does not confer PIT or formal OOS.
 
 > **Status:** CURRENT_ARCHITECTURE

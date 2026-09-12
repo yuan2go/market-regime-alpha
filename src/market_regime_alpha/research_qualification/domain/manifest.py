@@ -193,6 +193,7 @@ def parse_decision_input_dataset_manifest(
     if not isinstance(payload, dict):
         raise ValueError("Dataset manifest root must be an object")
     _reject_label_leakage_fields(payload)
+    empty_schema = payload.get("schema") == "mra-empty-decision-input-dataset-v2"
     _require_keys(
         payload,
         {
@@ -208,10 +209,10 @@ def parse_decision_input_dataset_manifest(
             "config_artifact",
             "sources",
             "rows",
-        },
+        } | ({"empty_population_session_source_id"} if empty_schema else set()),
         context="Dataset manifest",
     )
-    if payload["schema"] != "mra-decision-input-dataset-v1":
+    if payload["schema"] != "mra-decision-input-dataset-v1" and not empty_schema:
         raise ValueError("unsupported Decision-input Dataset manifest schema")
     definitions = {item.feature_definition_id: item for item in feature_definitions}
     if len(definitions) != len(feature_definitions):
@@ -269,6 +270,7 @@ def parse_decision_input_dataset_manifest(
         feature_ids=feature_ids,
         definitions=definitions,
         sources=sources,
+        empty_population_session_source_id=(_uuid(payload["empty_population_session_source_id"], "empty_population_session_source_id") if empty_schema else None),
     )
     return DecisionInputDatasetManifest(
         dataset_id=identity[0],
@@ -393,6 +395,7 @@ def _parse_rows(
     feature_ids: tuple[UUID, ...],
     definitions: dict[UUID, FeatureDefinition],
     sources: tuple[DatasetSource, ...],
+    empty_population_session_source_id: UUID | None = None,
 ) -> tuple[DecisionInputDatasetRow, ...]:
     if not isinstance(raw, list):
         raise ValueError("rows must be an array")
@@ -418,6 +421,11 @@ def _parse_rows(
         for cell in row.cells
         for source_id in cell.source_ids
     }
+    if empty_population_session_source_id is not None:
+        source = source_map.get(empty_population_session_source_id)
+        if rows or source is None or source.role is not DatasetSourceRole.MARKET_TRADING_SESSION:
+            raise ValueError("empty Dataset requires zero rows and its exact Calendar context source")
+        referenced.add(empty_population_session_source_id)
     unreferenced = set(source_map) - referenced
     if any(
         source_map[source_id].role is not DatasetSourceRole.FEATURE_DEFINITION

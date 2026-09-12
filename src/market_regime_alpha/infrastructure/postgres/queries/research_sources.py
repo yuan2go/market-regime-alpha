@@ -71,27 +71,23 @@ class PostgresResearchSourceQueries:
             raise RuntimeNotFoundError(
                 "Dataset Selection scope does not exist at the exact DecisionTime"
             )
-        retrospective = self._connection.execute(
-            """
-            SELECT universe.market_archive_id,
-                   universe.market_archive_seal_id,
-                   universe.knowledge_cutoff,
-                   universe.simulated_event_cutoff,
-                   universe.scope_content_sha256,
-                   eligibility.market_archive_id,
-                   eligibility.market_archive_seal_id,
-                   eligibility.knowledge_cutoff,
-                   eligibility.simulated_event_cutoff,
-                   eligibility.scope_content_sha256
-            FROM mra.exploratory_retrospective_universe_revision AS universe
-            JOIN mra.exploratory_retrospective_eligibility_batch AS eligibility
-              ON eligibility.universe_revision_id = universe.universe_revision_id
-            WHERE universe.universe_revision_id = %s
-              AND eligibility.eligibility_policy_id = %s
-            """
-            + (" FOR SHARE OF universe, eligibility" if lock else ""),
-            (universe_revision_id, eligibility_policy_id),
-        ).fetchone()
+        # Check each immutable binding independently: a missing half must never
+        # launder a retrospective population into ordinary Dataset authority.
+        retrospective_parts = []
+        for table, extra, parameters in (
+            ("exploratory_retrospective_universe_revision", "", (universe_revision_id,)),
+            ("exploratory_retrospective_eligibility_batch", " AND eligibility_policy_id=%s", (universe_revision_id, eligibility_policy_id)),
+        ):
+            retrospective_parts.append(self._connection.execute(
+                "SELECT market_archive_id, market_archive_seal_id, knowledge_cutoff, "
+                "simulated_event_cutoff, scope_content_sha256 FROM mra." + table
+                + " WHERE universe_revision_id=%s" + extra + (" FOR SHARE" if lock else ""),
+                parameters,
+            ).fetchone())
+        universe_scope, eligibility_scope = retrospective_parts
+        if (universe_scope is None) != (eligibility_scope is None):
+            raise RuntimeStateConflictError("retrospective Selection requires both exact scope bindings")
+        retrospective = None if universe_scope is None else tuple(universe_scope) + tuple(eligibility_scope or ())
         if exploratory_scope is None:
             if retrospective is not None:
                 raise RuntimeStateConflictError(

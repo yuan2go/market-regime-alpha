@@ -1155,6 +1155,7 @@ class BacktestCanonicalActionHandler:
             code_artifact=specification.code_artifact,
             config_artifact=specification.config_artifact,
             members=members,
+            empty_population_session_id=session.trading_session_id if not members else None,
         )
         manifest = self._artifacts.publish(
             materialized.manifest_content,

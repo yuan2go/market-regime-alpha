@@ -112,11 +112,11 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     app.decision_strategies.register(strategy, ctx("register:strategy"))
     app.research_evaluations.register_protocol(fit, ctx("register:fit_protocol"))
     app.research_evaluations.register_protocol(validation, ctx("register:validation_protocol"))
-    scope_content = _json({"schema": "selection-universe-scope-v1", "classification_code": "CSI300", "classification_scheme": "INDEX_MEMBERSHIP",
+    scope_content = _json({"schema": "selection-universe-scope-v1", "classification_code": "SURVIVORSHIP_LIMITED_V1", "classification_scheme": "STATIC_RESEARCH_ROSTER",
         "instrument_ids": [str(x) for x in plan.instrument_ids], "market_provider_product_id": str(product_id)}).rstrip(b"\n")
     scope_artifact = artifact(scope_content, "universe_scope")
     scope = UniverseScopeSpecification(scope_artifact.artifact_id, scope_artifact.content_sha256, scope_artifact.size_bytes,
-        product_id, "INDEX_MEMBERSHIP", "CSI300", tuple(InstrumentId(x) for x in plan.instrument_ids))
+        product_id, "STATIC_RESEARCH_ROSTER", "SURVIVORSHIP_LIMITED_V1", tuple(InstrumentId(x) for x in plan.instrument_ids))
     frozen_universe = app.selection.freeze_exploratory_retrospective_universe(universe_id=universe.universe_id, scope=scope,
         retrospective_scope=ExploratoryRetrospectiveSelectionScope(plan.market_archive_id, plan.market_archive_seal_id,
             evidence["seal"]["knowledge_cutoff"], evidence["sessions"][0]["close_at"]), context=ctx("freeze_universe"))

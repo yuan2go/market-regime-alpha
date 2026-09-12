@@ -474,14 +474,13 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                         guard.verify_startup(application)
                         guard.before_action()
                         with backtest_research_admission(backtest_run_id=arguments.run_id, specification_sha256=str(run.specification_sha256)):
-                            execute_backtest = application.backtest_execution.run if command == "run" else application.backtest_execution.resume
-                            return execute_backtest(run)
+                            return _execute_backtest(application, run, arguments)
                 if command == "progress":
                     return application.backtest_execution.progress(run)
                 if command == "run":
-                    return application.backtest_execution.run(run)
+                    return _execute_backtest(application, run, arguments)
                 if command == "resume":
-                    return application.backtest_execution.resume(run)
+                    return _execute_backtest(application, run, arguments)
                 return application.backtest_execution.inspect(run)
             if command == "replay":
                 return application.backtest_replay.verify(arguments.run_id)
@@ -671,6 +670,8 @@ def _parser() -> argparse.ArgumentParser:
         operation.add_argument("--run-id", required=True, type=UUID)
         if command in {"run", "resume"}:
             operation.add_argument("--operation-config", type=Path)
+            operation.add_argument("--maximum-actions", type=int, help="Stop before another owner action; resume reads the original plan")
+            operation.add_argument("--maximum-seconds", type=float, help="Elapsed invocation budget; does not interrupt an atomic owner command")
     report = backtest_commands.add_parser("report")
     report.add_argument("--run-id", required=True, type=UUID)
     report.add_argument("--format", choices=("json", "markdown"), default="json")
@@ -754,6 +755,18 @@ def _parser() -> argparse.ArgumentParser:
         inspection.add_argument("--archive-id", required=True, type=UUID)
         inspection.add_argument("--expected-database-name", required=True)
     return parser
+
+
+def _execute_backtest(application, run, arguments):
+    from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestExecutionBudget
+    maximum_actions = getattr(arguments, "maximum_actions", None)
+    maximum_seconds = getattr(arguments, "maximum_seconds", None)
+    operation = application.backtest_execution.run if arguments.backtest_command == "run" else application.backtest_execution.resume
+    if maximum_actions is None and maximum_seconds is None:
+        return operation(run)
+    budget = BacktestExecutionBudget(100_000 if maximum_actions is None else maximum_actions,
+                                    3600.0 if maximum_seconds is None else maximum_seconds)
+    return {"execution": operation(run, budget=budget), "invocation": application.backtest_execution.last_invocation}
 
 
 def _add_backtest_mutation_arguments(parser: argparse.ArgumentParser) -> None:

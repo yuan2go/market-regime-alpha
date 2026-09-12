@@ -110,6 +110,7 @@ def materialize_backtest_dataset(
     code_artifact: ArtifactBinding,
     config_artifact: ArtifactBinding,
     members: tuple[BacktestDatasetMember, ...],
+    empty_population_session_id: UUID | None = None,
 ) -> BacktestDatasetMaterialization:
     """Build exact deterministic bytes from typed population/Feature lineage."""
 
@@ -131,6 +132,12 @@ def materialize_backtest_dataset(
         raise ValueError("every Dataset member must carry the exact Feature roster")
 
     sources_by_id: dict[UUID, dict[str, object]] = {}
+    if not ordered and empty_population_session_id is not None:
+        source_id = uuid5(dataset_id, f"empty-population-session:{empty_population_session_id}")
+        sources_by_id[source_id] = {
+            "dataset_source_id": str(source_id), "role": "MARKET_TRADING_SESSION",
+            "market_trading_session_id": str(empty_population_session_id),
+        }
     for feature_definition_id in feature_definition_ids:
         source_id = uuid5(dataset_id, f"feature:{feature_definition_id}")
         sources_by_id[source_id] = {
@@ -216,6 +223,9 @@ def materialize_backtest_dataset(
         "sources": sources,
         "universe_revision_id": str(universe_revision_id),
     }
+    if not ordered and empty_population_session_id is not None:
+        payload["schema"] = "mra-empty-decision-input-dataset-v2"
+        payload["empty_population_session_source_id"] = str(uuid5(dataset_id, f"empty-population-session:{empty_population_session_id}"))
     content = json.dumps(
         payload,
         allow_nan=False,

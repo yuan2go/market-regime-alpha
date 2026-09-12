@@ -5,11 +5,36 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 from datetime import datetime
+import math
 from typing import Literal
 from uuid import UUID
 
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestExecutionBudget:
+    """Per-invocation resources; no persisted progress or simulated clock."""
+
+    maximum_actions: int = 100_000
+    maximum_seconds: float = 3600.0
+
+    def __post_init__(self) -> None:
+        if type(self.maximum_actions) is not int or not 1 <= self.maximum_actions <= 100_000:
+            raise ValueError("maximum_actions must be an integer between 1 and 100000")
+        if type(self.maximum_seconds) not in (int, float) or not math.isfinite(self.maximum_seconds) or not 0 < self.maximum_seconds <= 7200:
+            raise ValueError("maximum_seconds must be finite and in (0, 7200]")
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestInvocationStatistics:
+    stop_reason: str
+    attempted_actions: int
+    elapsed_seconds: float
+    action_seconds: float
+    reconciliation_count: int
+    reconciliation_seconds: float
 
 
 class BacktestActionKind(StrEnum):
