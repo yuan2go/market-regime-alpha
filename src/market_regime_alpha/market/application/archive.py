@@ -17,10 +17,10 @@ from market_regime_alpha.market.domain import (
     MarketArchive,
     MarketArchiveSeal,
     MarketArchiveSlice,
-    PriceBasis,
     ProspectiveArchiveGenerationPlan,
     ProspectiveArchivePlanningGap,
 )
+from market_regime_alpha.market.domain.archive import ArchivePriceBasis
 from market_regime_alpha.market.ports.archive import (
     ArchiveResourceStopRecord,
     ArchiveUnitOfWork,
@@ -55,7 +55,7 @@ class StartMarketArchiveRequest:
     provider_product_id: UUID
     exchange_code: str
     timeframe: BarTimeframe
-    price_basis: PriceBasis
+    price_basis: ArchivePriceBasis
     instrument_scope: str
     instrument_scope_sha256: str
     event_window_start: datetime

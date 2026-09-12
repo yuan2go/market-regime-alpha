@@ -7,6 +7,26 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+
+## Historical research in progress
+
+The independent historical pilot at implementation
+`58adbe97a6973b73de62acb9bd1e7e0a64c816e4` completed canonical Backtest
+`eb7b0b26-608e-5c96-a767-56ca4c4c2ebc`, including a bounded stop, fresh-process
+resume, six newly trained control/Ridge ModelVersions, 21 Evaluations, published
+report and matched replay. The original failed pilot remains terminal and retained.
+The source archive contains 32 names over eleven January 2026 sessions; the pilot
+uses two FIT and two validation sessions with explicit maturity/purge/embargo.
+
+On the 64 validation observations, Ridge v1/v2 MAE is approximately 0.01764 versus
+0.01746 for zero. Ridge, raw factor and frozen rule share mean daily Rank IC
+approximately -0.195. Constants retain NOT_ESTIMABLE rank diagnostics. This is a
+tiny descriptive result with STATIC_UNIVERSE / SURVIVORSHIP_LIMITED / retrospective
+knowledge limitations; it establishes neither stable model increment nor formal
+PIT/OOS or economic validity. Historical expansion, feature ablation and protected
+temporal validation remain active work in the [Roadmap](Roadmap.md).
+
+
 ## Continuous research reliability engineering
 
 The current development baseline is main

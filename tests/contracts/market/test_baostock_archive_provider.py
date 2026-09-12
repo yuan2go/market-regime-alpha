@@ -232,3 +232,30 @@ def test_deferred_session_does_not_contact_provider_before_runtime_capture():
     with BaoStockSession(empty_sdk, defer_login=True):
         pass
     assert empty_sdk.calls == []
+
+
+def test_backward_adjusted_query_is_explicit_and_never_relabels_raw_request():
+    sdk = _Sdk(_SdkResult(["date","code","adjustflag"], [["2026-01-05","sh.600000","1"]]))
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED,
+                                date(2026,1,5),date(2026,1,5),"sh.600000")
+    with BaoStockSession(sdk) as session:
+        session.execute(query)
+    call = next(c for c in sdk.calls if c[0] == "history")
+    assert call[2]["frequency"] == "d" and call[2]["adjustflag"] == "1"
+    assert '"version":2' in query.resource
+    raw = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,
+                              date(2026,1,5),date(2026,1,5),"sh.600000")
+    assert '"version":1' in raw.resource and raw.resource != query.resource
+    with pytest.raises(ValueError, match="not canonical"):
+        BaoStockArchiveQuery.from_resource(query.resource.replace('"version":2','"version":1'))
+
+
+def test_historical_transport_retry_observes_rate_interval(monkeypatch):
+    from market_regime_alpha.infrastructure.providers import baostock_archive as adapter
+    waits=[]
+    monkeypatch.setattr(adapter,"sleep",waits.append)
+    sdk=_FlakySdk(_SdkResult(["date"],[["2026-01-05"]]))
+    query=BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_RAW,date(2026,1,5),date(2026,1,5),"sh.600000")
+    with BaoStockSession(sdk,retry_interval_seconds=.25) as session:
+        session.execute(query)
+    assert sdk.history_attempts == 2 and waits == [.25]

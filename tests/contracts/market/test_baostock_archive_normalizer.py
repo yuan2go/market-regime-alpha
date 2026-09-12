@@ -559,3 +559,48 @@ def test_prospective_normalizer_preserves_provider_bars_for_owner_time_validatio
     assert new.bars == old.bars
     assert new.bars[0].event_end > observed  # Market must still reject this future bar.
     assert all(gap.event_end <= observed for gap in new.gaps)
+
+
+def test_adjusted_daily_is_a_separate_versioned_contract_and_preserves_actual_clock():
+    from decimal import Decimal
+    from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import BaoStockAdjustedDailyNormalizer
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED, date(2026,1,5), date(2026,1,5), "sh.600000")
+    assert json.loads(query.resource)["version"] == 2
+    assert BaoStockArchiveQuery.from_resource(query.resource) == query
+    fields = ["date","code","open","high","low","close","volume","amount","adjustflag","tradestatus","isST"]
+    row = ["2026-01-05","sh.600000","109.64076","121.35751","109","110.28235","100","1100","1","1","0"]
+    capture = _capture()
+    content = _payload(query, fields, [row])
+    class ExactSessions(_Sessions):
+        def sessions(self, **kwargs):
+            return tuple(s for s in super().sessions(**kwargs) if kwargs["start_date"] <= s.session_date <= kwargs["end_date"])
+    normalizer = BaoStockAdjustedDailyNormalizer(expected_query=query, trading_sessions=ExactSessions())
+    batch = normalizer.normalize(capture, content)
+    bar = batch.bars[0]
+    assert bar.price_basis is PriceBasis.BACKWARD_ADJUSTED
+    assert bar.open.amount == Decimal("109.64076") and bar.close.amount == Decimal("110.28235")
+    assert bar.capture_id == capture.capture_id and capture.temporal.known_at.value.year == 2026
+    with pytest.raises(ValueError, match="no canonical normalizer"):
+        BaoStockArchiveNormalizer(trading_sessions=_Sessions()).normalize(capture, content)
+    with pytest.raises(ValueError, match="BACKWARD_ADJUSTED"):
+        normalizer.normalize(capture, _payload(query,fields,[row[:8]+["3"]+row[9:]]))
+    gaps = normalizer.normalize(capture, _payload(query, fields, []))
+    from market_regime_alpha.market.domain import GapFactKind
+    bar_gaps = [g for g in gaps.gaps if g.fact_kind is GapFactKind.MARKET_BAR]
+    assert len(bar_gaps) == 1 and bar_gaps[0].price_basis is PriceBasis.BACKWARD_ADJUSTED
+    assert any(g.fact_kind is GapFactKind.INSTRUMENT_FACT and g.price_basis is None for g in gaps.gaps)
+    with pytest.raises(ValueError, match="duplicate bar"):
+        normalizer.normalize(capture, _payload(query,fields,[row,row]))
+
+
+def test_new_historical_normalizer_rejects_partial_calendar_and_wrong_security():
+    from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import BaoStockHistoricalNormalizer
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.TRADE_DATES, date(2026,1,1),date(2026,1,2))
+    normalizer = BaoStockHistoricalNormalizer(expected_query=query)
+    with pytest.raises(ValueError, match="exact requested dates"):
+        normalizer.normalize(_capture(),_payload(query,["calendar_date","is_trading_day"],[["2026-01-01","0"]]))
+    with pytest.raises(ValueError, match="duplicated"):
+        normalizer.normalize(_capture(),_payload(query,["calendar_date","is_trading_day"],[["2026-01-01","0"]]*2))
+    query = BaoStockArchiveQuery(BaoStockArchiveQueryKind.STOCK_BASIC,code="sh.600000")
+    with pytest.raises(ValueError, match="exact requested code"):
+        BaoStockHistoricalNormalizer(expected_query=query).normalize(_capture(),_payload(query,["code"],[["sh.600001"]]))

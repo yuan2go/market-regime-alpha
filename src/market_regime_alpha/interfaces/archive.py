@@ -6,6 +6,7 @@ from datetime import timedelta
 from collections.abc import Callable
 from pathlib import Path
 import re
+from time import monotonic, sleep
 from uuid import UUID
 
 from market_regime_alpha.bootstrap import (
@@ -16,11 +17,14 @@ from market_regime_alpha.bootstrap import (
 from market_regime_alpha.infrastructure.providers.baostock_archive import (
     BaoStockArchiveProvider,
     BaoStockArchiveQuery,
+    BaoStockArchiveQueryKind,
     BaoStockSdk,
     BaoStockSession,
 )
 from market_regime_alpha.infrastructure.providers.baostock_archive_normalizer import (
     BaoStockArchiveNormalizer,
+    BaoStockAdjustedDailyNormalizer,
+    BaoStockHistoricalNormalizer,
 )
 from market_regime_alpha.infrastructure.providers.baostock_acquisition_readiness import BaoStockProspectiveAcquisitionNormalizer
 from market_regime_alpha.market.application import (
@@ -31,6 +35,7 @@ from market_regime_alpha.market.application import (
 from market_regime_alpha.market.domain import (
     ArchiveLane,
 )
+from market_regime_alpha.market.domain.historical_acquisition import HistoricalAcquisitionBudget
 from market_regime_alpha.runtime.application import ActorType, CommandContext
 
 
@@ -88,6 +93,7 @@ def resume_archive(
     actor_id: str,
     operation_key: str,
     slice_ids: tuple[UUID, ...] | None = None,
+    budget: HistoricalAcquisitionBudget | None = None,
 ) -> tuple[object, ...]:
     results: list[object] = []
     selected = set(slice_ids or ())
@@ -125,13 +131,36 @@ def resume_archive(
             slice_ids = tuple(sorted(selected, key=str))
             if not slice_ids:
                 return ()
-    with BaoStockSession(sdk) as session:
+    if budget is None and manifest.start_request.price_basis.value == "MIXED_EXPLICIT":
+        budget = HistoricalAcquisitionBudget()
+    started = monotonic()
+    if budget is not None:
+        if manifest.start_request.lane is not ArchiveLane.RETROSPECTIVE_BACKFILL:
+            raise ValueError("historical acquisition budget cannot enter prospective execution")
+        inspection = application.archive_inspection.inspect(manifest.start_request.market_archive_id)
+        pending = {item.market_archive_slice_id for item in inspection.slices if item.status in {"DUE", "OVERDUE"}}
+        selected = pending if slice_ids is None else pending.intersection(selected)
+        slice_ids = tuple(selected)
+        if not slice_ids:
+            return ()
+    last_finished: float | None = None
+    with BaoStockSession(sdk, defer_login=True, retry_interval_seconds=budget.minimum_interval_seconds if budget is not None else 0) as session:
         provider = BaoStockArchiveProvider(session)
         for item in manifest.slices:
             if slice_ids is not None and item.plan.market_archive_slice_id not in selected:
                 continue
+            if budget is not None:
+                if len(results) >= budget.maximum_slices or monotonic() - started >= budget.maximum_seconds:
+                    break
+                if last_finished is not None:
+                    delay = budget.minimum_interval_seconds - (monotonic() - last_finished)
+                    if delay > 0:
+                        sleep(delay)
+                if monotonic() - started >= budget.maximum_seconds:
+                    break
             query = BaoStockArchiveQuery.from_resource(item.capture_request.resource)
-            normalizer = BaoStockArchiveNormalizer(
+            normalizer_class = BaoStockAdjustedDailyNormalizer if query.kind is BaoStockArchiveQueryKind.HISTORY_DAILY_BACK_ADJUSTED else (BaoStockHistoricalNormalizer if manifest.start_request.price_basis.value == "MIXED_EXPLICIT" else BaoStockArchiveNormalizer)
+            normalizer = normalizer_class(
                 expected_query=query,
                 revision_lineage=application.market_revision_lineage,
                 trading_sessions=application.archive_trading_sessions,
@@ -149,6 +178,7 @@ def resume_archive(
                     context=_context(manifest, actor_id, f"{operation_key}-{item.plan.ordinal}"),
                 )
             )
+            last_finished = monotonic()
     return tuple(results)
 
 

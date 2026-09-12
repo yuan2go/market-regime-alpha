@@ -76,7 +76,7 @@ Initial boundaries, before any new holdout result is read:
 | Packaging or documentation drift | Locked dependencies, focused owner regression, inventory/docs/static gates, independent installed wheel CLI and report/replay |
 
 - [x] Owner/physical data inventory, persistent scope and frozen pilot protocol.
-- [ ] Real small-sample daily Backtest/Model/Outcome/Evaluation/report and resume.
+- [x] Real small-sample daily Backtest/Model/Outcome/Evaluation/report and resume.
 - [ ] Bounded historical expansion and explicit ten-feature calculations.
 - [ ] Protected holdout, finite candidate plans, baseline and ablation execution.
 - [ ] Reconciled paired reports, economic limits and professional-source contracts.

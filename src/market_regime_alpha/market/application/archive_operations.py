@@ -168,6 +168,10 @@ class MarketArchiveOperations:
             complete_runtime_attempt=False,
         )
         capture_id = captured.capture.capture_id
+        if contract.lane is ArchiveLane.RETROSPECTIVE_BACKFILL and captured.replayed:
+            # A successful Capture predates this recovery invocation. Its actual
+            # start is the durable request boundary; the recovery clock is not.
+            requested_at = captured.capture.temporal.capture_started_at
         if captured.capture.status is CaptureStatus.PROVIDER_FAILURE:
             disposition = self._read_port.capture_disposition(capture_id)
             if disposition.status is not CaptureStatus.PROVIDER_FAILURE or len(disposition.source_gap_ids) != 1:

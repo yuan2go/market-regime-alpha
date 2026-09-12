@@ -218,3 +218,14 @@ def test_capture_observation_freezes_global_chain_and_real_times() -> None:
             },
             observation_ordinal=2,
         )
+
+
+def test_mixed_price_inventory_never_enters_prospective_or_individual_price_basis():
+    from dataclasses import replace
+    from market_regime_alpha.market.domain.archive import ArchiveSupplementalPriceBasis
+    mixed=replace(_archive(),price_basis=ArchiveSupplementalPriceBasis.MIXED_EXPLICIT)
+    assert mixed.evidence_class is ArchiveEvidenceClass.EXPLORATORY_RETROSPECTIVE
+    with pytest.raises(ValueError,match="retrospective research only"):
+        replace(mixed,lane=ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS)
+    with pytest.raises(ValueError):
+        PriceBasis("MIXED_EXPLICIT")

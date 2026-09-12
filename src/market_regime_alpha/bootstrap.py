@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from market_regime_alpha.infrastructure.postgres.queries.historical_acquisition import PostgresHistoricalAcquisitionSources
 from market_regime_alpha.infrastructure.postgres.queries.daily_feature_inputs import PostgresDailyFeatureInputReadPort
 from market_regime_alpha.infrastructure.postgres.queries.daily_predictions import PostgresDailyPredictionReads
 from market_regime_alpha.infrastructure.postgres.queries.calendar_continuity import PostgresCalendarContinuityReads
@@ -354,6 +355,7 @@ class TargetApplication:
     archive_operations: MarketArchiveOperations
     prospective_archives: ProspectiveArchiveRuntimeApplication
     archive_inspection: ArchiveInspectionPort
+    historical_acquisition_sources: PostgresHistoricalAcquisitionSources
     archive_acquisition_readiness: PostgresArchiveAcquisitionReadinessReads
     archive_verification: ArchiveVerificationPort
     archive_trading_sessions: ArchiveTradingSessionReadPort
@@ -638,6 +640,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
             admission_scope=prospective_series_admission,
         ),
         archive_inspection=PostgresArchiveInspectionPort(pool),
+        historical_acquisition_sources=PostgresHistoricalAcquisitionSources(pool),
         archive_acquisition_readiness=PostgresArchiveAcquisitionReadinessReads(pool, byte_store),
         archive_verification=PostgresArchiveVerificationPort(pool),
         archive_trading_sessions=PostgresArchiveTradingSessionReadPort(pool),

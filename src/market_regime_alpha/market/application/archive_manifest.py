@@ -18,12 +18,12 @@ from market_regime_alpha.market.application.archive import (
 from market_regime_alpha.market.domain import (
     ArchiveLane,
     BarTimeframe,
-    PriceBasis,
     ProspectiveArchiveGenerationPlan,
     ProspectiveArchiveMemberPlan,
     ProspectiveArchiveScheduleSlot,
     ProspectiveArchiveSliceSchedulePlan,
 )
+from market_regime_alpha.market.domain.archive import parse_archive_price_basis
 from market_regime_alpha.market.ports import CaptureRequest
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.identity import ContentHash
@@ -208,7 +208,7 @@ class ArchiveOperatorManifest:
                 provider_product_id=provider_product_id,
                 exchange_code=str(raw["exchange_code"]),
                 timeframe=BarTimeframe(raw["timeframe"]),
-                price_basis=PriceBasis(raw["price_basis"]),
+                price_basis=parse_archive_price_basis(raw["price_basis"]),
                 instrument_scope=str(raw["instrument_scope"]),
                 instrument_scope_sha256=str(raw["instrument_scope_sha256"]),
                 event_window_start=_datetime(raw["event_window_start"]),

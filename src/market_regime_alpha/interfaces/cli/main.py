@@ -350,7 +350,7 @@ def main(
 
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     if arguments.area == "research":
-        if arguments.research_command == "prepare-historical":
+        if arguments.research_command in {"prepare-historical", "prepare-history-data"}:
             from market_regime_alpha.interfaces.cli.research import execute_research
             return execute_research(settings, arguments)
         from market_regime_alpha.interfaces.cli.daily import dispatch_daily
@@ -562,15 +562,24 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 )
             if arguments.archive_command in {"resume", "retry"}:
                 import baostock as sdk
-
-                return resume_archive(
+                from time import monotonic
+                from market_regime_alpha.market.domain.historical_acquisition import HistoricalAcquisitionBudget
+                budget = (HistoricalAcquisitionBudget(arguments.maximum_slices if arguments.maximum_slices is not None else 8, arguments.maximum_seconds if arguments.maximum_seconds is not None else 1200)
+                          if arguments.maximum_slices is not None or arguments.maximum_seconds is not None or manifest.start_request.price_basis.value == "MIXED_EXPLICIT" else None)
+                started = monotonic()
+                result = resume_archive(
                     application,
                     manifest,
                     sdk=sdk,
                     actor_id=arguments.actor_id,
                     operation_key=arguments.operation_key,
                     slice_ids=(tuple(arguments.slice_id) if arguments.slice_id else None),
+                    budget=budget,
                 )
+                if budget is None:
+                    return result
+                return {"results": result, "elapsed_seconds": monotonic() - started,
+                        "inspection": application.archive_inspection.inspect(manifest.start_request.market_archive_id)}
     raise ValueError("command is not implemented")
 
 
@@ -748,6 +757,8 @@ def _parser() -> argparse.ArgumentParser:
         if command in {"resume", "retry"}:
             mutation.add_argument("--operation-key", required=True)
             mutation.add_argument("--slice-id", action="append", type=UUID)
+            mutation.add_argument("--maximum-slices", type=int)
+            mutation.add_argument("--maximum-seconds", type=float)
     for command in (
         "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
     ):

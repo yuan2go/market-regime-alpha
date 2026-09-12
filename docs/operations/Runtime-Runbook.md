@@ -41,6 +41,44 @@ service's current state. Use only the explicitly authorized project/database/
 user-job scope. Never stop an unknown process, substitute a restored writer, or
 reopen a terminal failed Run. Repository maintenance does not authorize deployment.
 
+## Historical data acquisition
+
+`mra research prepare-history-data` accepts the same isolated database, build,
+output and operator flags as `prepare-historical`. Its `mra-historical-acquisition-v1`
+plan freezes `archive_code`, exact `template_archive_id` / `template_archive_sha256`,
+`start_date`, `end_date` and sorted BaoStock `codes` already observed in that archive.
+It declares a separate ProviderProduct with explicit raw and backward-adjusted
+capabilities and starts the original MarketArchive owner. It does not download data.
+
+The request roster is Calendar, one security master per name, then daily raw and
+daily backward-adjusted history per name. It is capped at 66 names / 199 requests,
+six years, 32 MiB per response and 512 MiB total, with a 1 GiB free-space reserve
+by default. Dates must end before the actual UTC day. Current membership is never
+rewritten as historical membership. BaoStock remains an auxiliary exploratory
+source; paid-source permissions or PIT are not inferred.
+
+The `historical_archive_inventory_v10` registered upgrade adds `MIXED_EXPLICIT`
+only to retrospective archive inventories. Every Market bar and SourceGap retains
+its own exact price basis; prospective archives and individual prices cannot use
+this token. Raw Target labels and adjusted cross-day Feature dependencies can
+therefore share an exact sealed capture roster without relabeling either.
+Backward adjustment is BaoStock's documented percentage-change convention, not
+a distribution-reinvestment or executable return contract; see the publisher's
+[adjustment specification](https://www.baostock.com/helpdocs/pdf/BaoStock%E5%A4%8D%E6%9D%83%E5%9B%A0%E5%AD%90%E7%AE%80%E4%BB%8B.pdf).
+Actual capture/known times and unknown availability/finality are preserved.
+
+Run the returned `archive-manifest.json` through `mra archive resume --manifest
+"$FROZEN_ARCHIVE_MANIFEST" --expected-database-name "$RESEARCH_DATABASE_NAME"
+--actor-id "$RESEARCH_OPERATOR" --operation-key "$STABLE_OPERATION_KEY"
+--maximum-slices 8 --maximum-seconds 1200`. Bounded mode discovers pending DUE/OVERDUE
+slices, admits no more than 200 slices / 7,200 seconds, spaces slices by at least
+0.25 seconds, drains the current owner operation and returns full Archive
+inspection with elapsed time. The Provider has a 30-second response deadline and
+at most two transport attempts. New mixed inventories apply these defaults even without budget flags. Reuse
+the frozen manifest and operation key on restart; captured/terminal slices are not downloaded again. Terminal gaps and
+resource stops remain evidence and require a new declared archive for correction.
+The existing seal, revision/gap report and replay owners remain authoritative.
+
 ## Daily reliability operations
 
 Use the installed `mra` belonging to the exact approved profile. The existing
