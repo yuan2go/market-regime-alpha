@@ -27,6 +27,7 @@ from market_regime_alpha.runtime.ports import (
     CommandReceiptRepository,
     RuntimeCommandFinalization,
 )
+from market_regime_alpha.research_qualification.ports.backtest_holdout import BacktestHoldoutRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,9 @@ class BacktestRepository(Protocol):
 
 
 class BacktestUnitOfWork(Protocol):
+    @property
+    def holdouts(self) -> BacktestHoldoutRepository: ...
+
     @property
     def backtests(self) -> BacktestRepository: ...
 

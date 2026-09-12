@@ -58,12 +58,16 @@ def test_fresh_schema_records_exact_immutable_baseline_and_correction(target_dat
     manager = SchemaManager(target_database_url)
     result = manager.bootstrap()
     assert result.baseline_checksum == _BASELINE
-    assert result.catalog_checksum == schema._DAILY_CLOSURE_CATALOG_SHA256
+    assert result.catalog_checksum == schema._HOLDOUT_CATALOG_SHA256
     with psycopg.connect(target_database_url) as connection:
         assert connection.execute('SELECT version,name,checksum FROM mra.schema_migrations ORDER BY version').fetchall() == [
             (1, '001_baseline', _BASELINE), (2, '002_prospective_revision_gap', _PATCH),
             (3, '003_daily_model_research', schema._DAILY_BUNDLE_SHA256),
             (4, '004_daily_operational_closure', schema._DAILY_CLOSURE_BUNDLE_SHA256),
+            (5, '005_static_research_universe', schema._STATIC_RESEARCH_BUNDLE_SHA256),
+            (6, '006_historical_archive_inventory', schema._HISTORICAL_ARCHIVE_BUNDLE_SHA256),
+            (7, '007_backtest_model_subsets', schema._MODEL_SUBSETS_BUNDLE_SHA256),
+            (8, '008_backtest_exploratory_holdout', schema._HOLDOUT_BUNDLE_SHA256),
         ]
     assert manager.bootstrap().created is False
     assert manager.verify().catalog_checksum == result.catalog_checksum
@@ -86,6 +90,10 @@ def test_prior_baseline_and_all_published_upgrade_bundles_remain_exact(target_da
         _PATCH,
         schema._DAILY_BUNDLE_SHA256,
         schema._DAILY_CLOSURE_BUNDLE_SHA256,
+        '5499f2137d268eb0eb4bd5ebe5301295240675319657e2e99f93f87f0ef8daf3',
+        'bd838d8ac883c4a2adb2883af14ae63ce67174beaee659dea21132dbbbaedeaa',
+        'af8de6bda7051916fa868d3a08139ccef7214d9dcf0540c29dc55f35d79a9334',
+        '7b3fec55f3ad340dd65b462131d378693c9ab841fb09502e484ccce746958d87',
     ]
     for definition in definitions:
         assert manager._resolve_operational_upgrade_definition(
@@ -209,7 +217,11 @@ def test_v7_to_daily_closure_v8_is_forward_only_and_reconciles_unknown_commit(
         assert connection.execute(
             "SELECT source_decision_run_id FROM mra.research_partition LIMIT 0"
         ).description is not None
-    assert manager.verify().catalog_checksum==schema._DAILY_CLOSURE_CATALOG_SHA256
+    assert result.verification.catalog_checksum==schema._DAILY_CLOSURE_CATALOG_SHA256
+    # The exact old upgrade remains replayable, but current-code admission
+    # must refuse a database that has not installed the later owner roster.
+    with pytest.raises(schema.CatalogDriftError,match="Target table inventory differs"):
+        manager.verify()
     assert store.verify(
         artifact.content_sha256,expected_size=artifact.size_bytes
     ).result=='VERIFIED'

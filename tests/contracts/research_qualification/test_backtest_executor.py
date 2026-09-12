@@ -62,6 +62,22 @@ def test_executor_reconciles_after_every_action_and_completes_not_estimable_run(
     assert len(state.observations) == len(BacktestExecutionPlanner().compile(run).expected_actions)
 
 
+def test_reserved_holdout_stays_visible_without_terminal_failure_or_owner_writes():
+    frozen = _run()
+    state = _CanonicalState({})
+    blockers = ["EXPLORATORY_HOLDOUT_RESERVED:fixture"]
+    executor = BacktestExecutor(state, state, execution_blockers=lambda identity: tuple(blockers))
+    result = executor.run(frozen)
+    assert result.execution_state is BacktestExecutionState.PLANNED
+    assert result.execution_blockers == tuple(blockers)
+    assert result.ready_actions == () and result.expected_actions
+    assert not state.observations
+    assert executor.last_invocation.stop_reason == "BLOCKED"
+    assert executor.inspect(frozen) == result
+    blockers.clear()
+    assert executor.resume(frozen).execution_state is BacktestExecutionState.COMPLETED
+
+
 def test_run_requires_zero_existing_execution_but_resume_reuses_completed_actions() -> None:
     frozen = _run()
     first = BacktestExecutionPlanner().compile(frozen).expected_actions[0]

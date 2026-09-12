@@ -34,6 +34,8 @@ class HistoricalStudyPlan:
             raise ValueError("study_code requires a lowercase code of at most 50 characters")
         for digest in (self.template_definition_sha256, self.market_archive_sha256, self.market_archive_seal_sha256):
             ContentHash(digest)
+        if not all(isinstance(identity, UUID) for identity in (self.template_backtest_id,self.market_archive_id,self.market_archive_seal_id,*self.instrument_ids)):
+            raise TypeError("historical study identities must be UUID values")
         if not self.fit_dates or not self.validation_dates:
             raise ValueError("historical study needs explicit FIT and validation sessions")
         dates = self.fit_dates + self.purge_dates + self.embargo_dates + self.validation_dates

@@ -115,15 +115,14 @@ class PostgresSelectionRepository:
         )
         return policy.version
 
-    def load_eligibility_policy(self, policy_id: UUID) -> EligibilityPolicy:
+    def load_eligibility_policy(self, policy_id: UUID, *, lock: bool = True) -> EligibilityPolicy:
         row = self._connection.execute(
             """
             SELECT eligibility_policy_id, market_provider_product_id,
                    policy_code, version, content_sha256, rule_count
             FROM mra.eligibility_policy
             WHERE eligibility_policy_id = %s
-            FOR SHARE
-            """,
+            """ + (" FOR SHARE" if lock else ""),
             (policy_id,),
         ).fetchone()
         if row is None:

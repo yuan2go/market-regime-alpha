@@ -83,6 +83,9 @@ class PostgresTransactionalOutcomeAcquisition:
             raise EvaluationAcquisitionError("Partition member roster is incomplete")
         if any(member.target_definition_id != target_id for member in members):
             raise EvaluationAcquisitionError("Partition member Target mismatch")
+        for member in members:
+            self._connection.execute("SELECT mra.require_backtest_holdout_access(%s,%s,%s)",
+                (member.commitment_id, member.outcome_due_at, evaluation_run_id))
         revisions = tuple(self._resolve_visible(member, cutoff) for member in members)
 
         # Preserve global lock order: Outcome (#9), Partition (#10), Evaluation (#11).

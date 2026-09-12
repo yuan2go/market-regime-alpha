@@ -166,6 +166,7 @@ class BacktestExecutionPlan:
     execution_state: BacktestExecutionState
     research_state: BacktestResearchState
     integrity_mismatch_action_ids: tuple[UUID, ...]
+    execution_blockers: tuple[str, ...] = ()
     action_roster_sha256: ContentHash = field(init=False)
 
     def __post_init__(self) -> None:

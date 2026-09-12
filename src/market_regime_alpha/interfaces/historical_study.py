@@ -53,7 +53,7 @@ def _exact(path: Path, content: bytes) -> None:
 
 def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: Path,
                   lockfile: Path, source_checkout: Path, code_sha: str, output: Path, actor_id: str,
-                  matrix: HistoricalMatrixPlan | None = None) -> dict[str, Any]:
+                  matrix: HistoricalMatrixPlan | None = None, reuse_contracts_from: UUID | None = None) -> dict[str, Any]:
     """Owner declarations and a frozen portable specification, resumable by ID."""
     if not output.is_dir():
         raise ValueError("study output must be an existing persistent directory")
@@ -62,6 +62,22 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
         raise ValueError("historical matrix baseline identity mismatch")
     splits = ((HistoricalTimeSplit(plan.fit_dates,plan.purge_dates,plan.embargo_dates,plan.validation_dates),) if matrix is None else matrix.splits)
     evidence = read_study_dependencies(app._pool, plan, () if matrix is None else matrix.additional_splits, None if matrix is None else matrix.step_sessions)
+    reused = None
+    if reuse_contracts_from is not None:
+        from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import load_parser_feature_definitions
+        from market_regime_alpha.infrastructure.postgres.repositories.target_definitions import PostgresTargetDefinitionRepository
+        from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import _load_strategy
+        from market_regime_alpha.infrastructure.postgres.repositories.selection import PostgresSelectionRepository
+        from market_regime_alpha.infrastructure.postgres.repositories.candidate import PostgresCandidateRepository
+        reused = app.backtest_specifications.load_specification(reuse_contracts_from)
+        if matrix is None or reused.market_archive.authority_id != plan.market_archive_id or reused.market_archive_seal.authority_id != plan.market_archive_seal_id:
+            raise ValueError("heldout contract reuse requires an expanded matrix over the exact original sealed Archive")
+        with app._pool.connection(read_only=True) as connection:
+            reused_target = PostgresTargetDefinitionRepository(connection).target_definition(reused.target.authority_id, lock=False)
+            reused_features = load_parser_feature_definitions(connection, tuple(f.authority_id for f in reused.feature_definitions))
+            reused_strategy = _load_strategy(connection, reused.defaults.strategy.authority_id, lock=False)
+            reused_eligibility = PostgresSelectionRepository(connection).load_eligibility_policy(reused.eligibility_policy.authority_id, lock=False)
+            reused_candidate = PostgresCandidateRepository(connection).policy(reused.defaults.candidate.authority_id, lock=False)
     frozen = {"schema": "mra-historical-study-freeze-v1" if matrix is None else "mra-historical-matrix-freeze-v1", "plan": asdict(plan if matrix is None else matrix), "code_sha": code_sha,
               "wheel_sha256": build.wheel_sha256, "lockfile_sha256": build.lockfile_sha256,
               "sessions": evidence["sessions"], "target_coverage": evidence["target_coverage"],
@@ -71,6 +87,8 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
               "economics": "NOT_ESTIMABLE_NON_TRADABLE_PREDICTION_DIAGNOSTIC"}
     if matrix is not None:
         frozen["ridge_alpha"]="BASELINE_1_EXPANDED_PER_CANDIDATE"
+    if reused is not None:
+        frozen["reuse_contracts_from"] = {"run_id": reused.exploratory_backtest_run_id, "specification_sha256": str(reused.content_sha256)}
     content = _json(frozen)
     _exact(output / "frozen-study.json", content)
     provenance = sha256(content).hexdigest()
@@ -88,6 +106,15 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     feature = replace(daily_feature_definition(uid("feature"), code, config), feature_code=plan.study_code + "_session_move")
     expanded_features = () if matrix is None else tuple(replace(f,feature_code=plan.study_code+"_"+f.algorithm_code)
         for f in historical_feature_definitions(uid("historical-features"),code,config))
+    if reused is not None:
+        target = reused_target
+        originals = tuple(f for f in reused_features if f.algorithm_code == "session_open_close_move_v1")
+        if len(originals) != 1:
+            raise ValueError("reused baseline Feature identity is ambiguous")
+        feature = originals[0]
+        expanded_features = tuple(f for f in reused_features if f.algorithm_code in FACTORS_BY_CODE)
+        if len(expanded_features) != len(FACTORS_BY_CODE):
+            raise ValueError("reused expanded Feature roster is incomplete")
     feature_by_name = {FACTORS_BY_CODE[f.algorithm_code].name:f for f in expanded_features}
     features = tuple(sorted((feature,*expanded_features),key=lambda f:str(f.feature_definition_id)))
     universe = UniverseDefinition(uid("universe"), plan.study_code + "_universe", plan.universe_limitation)
@@ -115,17 +142,23 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             coefficient=D(".02"), intercept=D("-.01")) for r in old.forecast_rules),
         code_artifact=replace(old.code_artifact, artifact_id=code.artifact_id, content_sha256=str(code.content_sha256), size_bytes=code.size_bytes),
         config_artifact=replace(old.config_artifact, artifact_id=config.artifact_id, content_sha256=str(config.content_sha256), size_bytes=config.size_bytes), provenance_sha256=provenance)
+    if reused is not None:
+        strategy = reused_strategy
+        sid = strategy.strategy_version_id
+        eligibility, candidate = reused_eligibility, reused_candidate
     fit = prediction_protocol(uid("fit_protocol"), plan.study_code + "_fit", V.PartitionPurpose.FIT, target, code, config, provenance)
     validation = prediction_protocol(uid("validation_protocol"), plan.study_code + "_validation", V.PartitionPurpose.VALIDATION, target, code, config, provenance)
-    app.research_definitions.register_target_definition(target, ctx("register:target"))
-    for registered in features:
-        app.research_definitions.register_feature_definition(registered,ctx("register:feature" if registered is feature else "register:feature:"+registered.algorithm_code))
+    if reused is None:
+        app.research_definitions.register_target_definition(target, ctx("register:target"))
+        for registered in features:
+            app.research_definitions.register_feature_definition(registered,ctx("register:feature" if registered is feature else "register:feature:"+registered.algorithm_code))
     app.selection.register_universe(universe, ctx("register:universe"))
-    app.selection.register_eligibility_policy(eligibility, ctx("register:eligibility"))
-    app.candidates.register_candidate_policy(candidate, ctx("register:candidate"))
-    app.decision_strategies.register(strategy, ctx("register:strategy"))
-    app.research_evaluations.register_protocol(fit, ctx("register:fit_protocol"))
-    app.research_evaluations.register_protocol(validation, ctx("register:validation_protocol"))
+    if reused is None:
+        app.selection.register_eligibility_policy(eligibility, ctx("register:eligibility"))
+        app.candidates.register_candidate_policy(candidate, ctx("register:candidate"))
+        app.decision_strategies.register(strategy, ctx("register:strategy"))
+        app.research_evaluations.register_protocol(fit, ctx("register:fit_protocol"))
+        app.research_evaluations.register_protocol(validation, ctx("register:validation_protocol"))
     scope_content = _json({"schema": "selection-universe-scope-v1", "classification_code": "SURVIVORSHIP_LIMITED_V1", "classification_scheme": "STATIC_RESEARCH_ROSTER",
         "instrument_ids": [str(x) for x in plan.instrument_ids], "market_provider_product_id": str(product_id)}).rstrip(b"\n")
     scope_artifact = artifact(scope_content, "universe_scope")
@@ -140,6 +173,8 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     defaults = B.BacktestPolicyDefaults(binding(candidate.candidate_policy_id, candidate.content_sha256),
         binding(previous["context_policy_id"], previous["context_policy_sha256"]), binding(sid, strategy.content_sha256),
         binding(previous["portfolio_policy_id"], previous["portfolio_policy_sha256"]), binding(previous["risk_policy_id"], previous["risk_policy_sha256"]))
+    if reused is not None:
+        defaults = reused.defaults
     cost = B.BacktestCostAssumption(uid("cost"), 1, B.BacktestCostKind.COMMISSION_BPS, B.BacktestCostChargeSide.BOTH, D(0))
     cost_hash = canonical_json_sha256(({"assumption_id": cost.assumption_id, "ordinal": 1, "content_sha256": str(cost.content_sha256)},))
     sessions = {row["session_date"]: row for row in evidence["sessions"]}
@@ -150,8 +185,10 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             (V.PartitionPurpose.VALIDATION,validation,tuple((day,B.BacktestSessionRole.PURGE) for day in split.purge_dates)
                 +tuple((day,B.BacktestSessionRole.EMBARGO) for day in split.embargo_dates)+tuple((day,B.BacktestSessionRole.EVALUATION) for day in split.validation_dates))):
             i=len(folded)+1
+            protocol_binding = (binding(protocol.evaluation_protocol_id,protocol.content_sha256) if reused is None else
+                next(f.evaluation_protocol for f in reused.folds if f.purpose is purpose))
             folded.append(B.BacktestFoldSpecification(uid("fold:"+str(i)),i,purpose,evidence["archive"]["exchange_code"],
-                0 if purpose is V.PartitionPurpose.FIT else len(split.purge_dates),0 if purpose is V.PartitionPurpose.FIT else len(split.embargo_dates),binding(protocol.evaluation_protocol_id,protocol.content_sha256),
+                0 if purpose is V.PartitionPurpose.FIT else len(split.purge_dates),0 if purpose is V.PartitionPurpose.FIT else len(split.embargo_dates),protocol_binding,
                 tuple(B.BacktestFoldSession(uid("session:"+("" if matrix is None else str(i)+":")+str(day)),j,sessions[day]["session_id"],day,role) for j,(day,role) in enumerate(roster,1))))
     folds=tuple(folded)
     environment = M.ModelExecutionEnvironment(platform.python_implementation().lower(), platform.python_version(), "uv", build.package_manager_version,
@@ -177,7 +214,7 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             for split_index in range(len(splits)):
                 training.append(B.BacktestModelTrainingRequirement(uid("training:"+name+("" if matrix is None else ":"+str(split_index+1))),len(training)+1,uid("arm:"+name),
                     folds[2*split_index].exploratory_backtest_fold_id,folds[2*split_index+1].exploratory_backtest_fold_id,model_binding,
-                    binding(fit.metrics[0].evaluation_protocol_metric_id,fit.metrics[0].content_sha256),split_index+1,recipe))
+                    (binding(fit.metrics[0].evaluation_protocol_metric_id,fit.metrics[0].content_sha256) if reused is None else reused.model_training_requirements[0].training_metric),split_index+1,recipe))
         arms.append(B.BacktestArmSpecification(uid("arm:" + name), ordinal, name, B.BacktestExecutionKind.RULE if name == "rule" else B.BacktestExecutionKind.MODEL,
             B.BacktestComparisonRole.BASELINE if name == "rule" else B.BacktestComparisonRole.CHALLENGER, B.BacktestContextMode.OBSERVATIONAL,
             defaults.candidate, defaults.context, defaults.strategy, model_binding, defaults.portfolio, defaults.risk, cost_hash))

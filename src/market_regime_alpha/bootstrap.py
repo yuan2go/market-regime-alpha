@@ -194,6 +194,8 @@ from market_regime_alpha.infrastructure.postgres.queries.prospective_health impo
 from market_regime_alpha.research_qualification.application.backtest_diagnostics import BacktestDiagnosticsApplication
 from market_regime_alpha.research_qualification.application.historical_comparison import HistoricalComparisonApplication
 from market_regime_alpha.infrastructure.postgres.queries.historical_comparison import PostgresHistoricalComparisonInputs
+from market_regime_alpha.infrastructure.postgres.queries.backtest_holdout import PostgresBacktestHoldoutReadPort
+from market_regime_alpha.research_qualification.application.backtest_holdout import BacktestHoldoutApplication
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
     PostgresBacktestQueryPort,
 )
@@ -354,6 +356,7 @@ class TargetApplication:
     operational_diagnostics: PostgresOperationalDiagnostics
     backtest_diagnostics: BacktestDiagnosticsApplication
     historical_comparison: HistoricalComparisonApplication
+    backtest_holdouts: BacktestHoldoutApplication
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
@@ -478,6 +481,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresEvaluationUnitOfWorkProvider(pool, id_factory=uuid4),
         id_factory=uuid4,
         outcome_prices=PostgresOutcomeQueryProvider(pool),
+        holdout_integrity=PostgresBacktestHoldoutReadPort(pool, byte_store).verify_evaluation_artifacts,
     )
     model_trainers = ExplicitModelTrainerComposition(
         (DeterministicRidgeTrainer(), ResearchBaselineTrainer())
@@ -545,7 +549,7 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresRiskQueryProvider(pool),
     )
     outcome_application = OutcomeApplication(
-        PostgresOutcomeInputPreparationProvider(pool),
+        PostgresOutcomeInputPreparationProvider(pool, holdout_integrity=PostgresBacktestHoldoutReadPort(pool, byte_store).verify_artifacts),
         PostgresOutcomeUnitOfWorkProvider(pool),
         PostgresOutcomeQueryProvider(pool),
     )
@@ -593,9 +597,11 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         handler=backtest_action_handler,
         worker_id="generic-backtest-worker",
     )
+    holdout_queries = PostgresBacktestHoldoutReadPort(pool, byte_store)
     backtest_execution = BacktestExecutor(
         backtest_observations,
         backtest_action_executor,
+        execution_blockers=holdout_queries.execution_blockers,
     )
     backtest_replay = BacktestReplayApplication(
         PostgresBacktestAuthorityQueryPort(pool),
@@ -606,6 +612,10 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         PostgresBacktestReportSourcePort(pool),
         backtest_replay,
     )
+    historical_comparison = HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool), backtest_reports,
+        PostgresBacktestDiagnosticsSourcePort(pool), backtest_specifications)
+    backtest_holdouts = BacktestHoldoutApplication(PostgresBacktestUnitOfWorkProvider(pool), holdout_queries,
+        backtest_specifications, historical_comparison, artifact_application, byte_store, id_factory=uuid4)
     def verify_daily_evidence() -> dict[str, Any]:
         from market_regime_alpha.interfaces.daily_health import daily_health
         return daily_health(application, complete_history=True, replay=True)
@@ -617,8 +627,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_diagnostics=BacktestDiagnosticsApplication(
             PostgresBacktestDiagnosticsSourcePort(pool), backtest_reports,
         ),
-        historical_comparison=HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool),backtest_reports,
-            PostgresBacktestDiagnosticsSourcePort(pool),backtest_specifications),
+        historical_comparison=historical_comparison,
+        backtest_holdouts=backtest_holdouts,
         evidence=EvidenceApplication(
             PostgresEvidenceSnapshotPort(pool),
             FilesystemEvidenceIntegrity(settings.artifact_root),

@@ -77,7 +77,8 @@ Initial boundaries, before any new holdout result is read:
 
 - [x] Owner/physical data inventory, persistent scope and frozen pilot protocol.
 - [x] Real small-sample daily Backtest/Model/Outcome/Evaluation/report and resume.
-- [ ] Bounded historical expansion and explicit ten-feature calculations.
+- [x] Bounded historical expansion and explicit ten-feature calculations;
+  sealed 2022–2025 archive and real two-period engineering preflight retained.
 - [ ] Protected holdout, finite candidate plans, baseline and ablation execution.
 - [ ] Reconciled paired reports, economic limits and professional-source contracts.
 - [ ] Necessary regression, installed wheel, persistent command/hash indexes,

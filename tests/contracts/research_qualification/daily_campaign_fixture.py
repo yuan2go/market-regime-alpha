@@ -21,8 +21,8 @@ from tests.contracts.research_qualification import _historical_backtest_catalog 
 from tests.contracts.research_qualification.archive_campaign_fixture import seed_complete_archive, _binding, _context
 
 
-def daily_baseline(app):
-    product, instruments, sessions, code, config, archive_id, seal = seed_complete_archive(app, daily_bars=True)
+def daily_baseline(app, *, archive_exchange="SSE", mixed_daily_bars=False, all_session_facts=False):
+    product, instruments, sessions, code, config, archive_id, seal = seed_complete_archive(app, daily_bars=True, archive_exchange=archive_exchange, mixed_daily_bars=mixed_daily_bars, all_session_facts=all_session_facts)
     ca, cf = _binding(code), _binding(config)
     target = daily_target_definition(uuid4(), ca, cf)
     feature = daily_feature_definition(uuid4(), ca, cf)

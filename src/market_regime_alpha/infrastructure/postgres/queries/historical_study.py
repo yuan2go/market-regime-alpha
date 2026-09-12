@@ -32,7 +32,8 @@ def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan,
                 ORDER BY session_date""", (archive["exchange_code"], dates[0], dates[-1])).fetchall()
             for window in expected_windows:
                 if tuple(r["session_date"] for r in sessions if window[0]<=r["session_date"]<=window[-1]) != window:
-                    raise ValueError("each study split must cover every real Calendar session in its interval")
+                    actual = tuple(r["session_date"] for r in sessions if window[0]<=r["session_date"]<=window[-1])
+                    raise ValueError(f"each study split must cover every real Calendar session in its interval: exchange={archive['exchange_code']}, expected={window}, actual={actual}")
             if additional_splits:
                 index={r["session_date"]:i for i,r in enumerate(sessions)}
                 if step_sessions is None or any(index[current.fit_dates[0]]-index[previous.fit_dates[0]]!=step_sessions

@@ -12,6 +12,21 @@ from market_regime_alpha.research_qualification.domain.historical_study import H
 
 
 def add_historical_parser(commands) -> None:
+    from market_regime_alpha.interfaces.cli.holdout import add_holdout_parsers
+    add_holdout_parsers(commands)
+    recorded=commands.add_parser("provider-recording-check")
+    recorded.add_argument("--contract",required=True,type=Path)
+    recorded.add_argument("--recording",required=True,type=Path)
+    recorded.add_argument("--expected-sha256",required=True)
+    recorded.add_argument("--expected-database-name",required=True)
+    recorded.add_argument("--expected-database-oid",required=True,type=int)
+    recorded.add_argument("--capture-product-id",type=UUID)
+    recorded.add_argument("--capture-key")
+    recorded.add_argument("--actor-id",default="historical-research-operator")
+    replay=commands.add_parser("provider-recording-replay")
+    replay.add_argument("--capture-id",required=True,type=UUID)
+    replay.add_argument("--expected-database-name",required=True)
+    replay.add_argument("--expected-database-oid",required=True,type=int)
     comparison=commands.add_parser("history-compare")
     comparison.add_argument("--run-id",required=True,type=UUID)
     comparison.add_argument("--expected-database-name",required=True)
@@ -31,6 +46,8 @@ def add_historical_parser(commands) -> None:
         prepare.add_argument("--expected-database-name", required=True)
         prepare.add_argument("--expected-database-oid", required=True, type=int)
         prepare.add_argument("--actor-id", required=True)
+        if command == "prepare-historical":
+            prepare.add_argument("--reuse-contracts-from", type=UUID)
 
 
 def execute_research(settings: TargetSettings, arguments: argparse.Namespace) -> object:
@@ -39,6 +56,37 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
     if identity.database_oid != arguments.expected_database_oid:
         raise ValueError("research database OID differs from operator intent")
     with bootstrap_application(settings) as app:
+        if arguments.research_command=="provider-recording-replay":
+            from market_regime_alpha.infrastructure.postgres.queries.professional_recording import replay_recorded_capture
+            from market_regime_alpha.infrastructure.artifacts.local import LocalArtifactStore
+            return replay_recorded_capture(app._pool,LocalArtifactStore(settings.artifact_root),arguments.capture_id)
+        if arguments.research_command=="provider-recording-check":
+            from market_regime_alpha.market.domain.professional_daily import ProfessionalDailyContract
+            from market_regime_alpha.infrastructure.recorded_professional_provider import RecordedProfessionalMarketProvider
+            from market_regime_alpha.market.ports.provider import CaptureRequest
+            from market_regime_alpha.runtime.application import CommandContext, ActorType
+            if arguments.contract.stat().st_size>100_000:
+                raise ValueError("professional contract exceeds byte budget")
+            contract=ProfessionalDailyContract.from_bytes(arguments.contract.read_bytes())
+            if arguments.recording.stat().st_size>contract.maximum_bytes:
+                raise ValueError("professional recording exceeds frozen byte budget")
+            provider=RecordedProfessionalMarketProvider(contract,arguments.recording.read_bytes(),expected_sha256=arguments.expected_sha256)
+            result=dict(provider.verification)
+            if arguments.capture_product_id is not None:
+                if not arguments.capture_key:
+                    raise ValueError("canonical recorded capture requires an explicit capture key")
+                from market_regime_alpha.shared.hashing import canonical_json_sha256
+                from market_regime_alpha.shared.identity import ContentHash
+                captured=app.market.capture(CaptureRequest(arguments.capture_product_id,arguments.capture_key,
+                    provider.resource,ContentHash(canonical_json_sha256({}))),provider,
+                    CommandContext(arguments.capture_key,ActorType.OPERATOR,arguments.actor_id,"LOCAL_RECORDED_PROVIDER_CONTRACT"))
+                result["capture_id"]=captured.capture.capture_id
+            elif arguments.capture_key:
+                raise ValueError("capture key requires the exact original Provider product")
+            return result
+        if arguments.research_command.startswith("holdout-"):
+            from market_regime_alpha.interfaces.cli.holdout import execute_holdout
+            return execute_holdout(app, arguments)
         if arguments.research_command=="history-compare":
             payload=app.historical_comparison.project(arguments.run_id)
             if arguments.publish:
@@ -62,7 +110,10 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
             from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalMatrixPlan
             matrix=HistoricalMatrixPlan.from_bytes(content)
             return prepare_study(app,matrix.baseline,wheel=arguments.wheel,lockfile=arguments.lockfile,
-                source_checkout=arguments.source_checkout,code_sha=arguments.code_sha,output=arguments.output,actor_id=arguments.actor_id,matrix=matrix)
+                source_checkout=arguments.source_checkout,code_sha=arguments.code_sha,output=arguments.output,actor_id=arguments.actor_id,matrix=matrix,
+                reuse_contracts_from=arguments.reuse_contracts_from)
         plan = HistoricalStudyPlan.from_bytes(content)
+        if arguments.reuse_contracts_from is not None:
+            raise ValueError("contract reuse requires a historical matrix")
         return prepare_study(app, plan, wheel=arguments.wheel, lockfile=arguments.lockfile,
             source_checkout=arguments.source_checkout, code_sha=arguments.code_sha, output=arguments.output, actor_id=arguments.actor_id)

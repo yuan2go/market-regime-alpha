@@ -60,6 +60,16 @@ Zero MAE is about 0.01732, original Ridge v1/v2 0.01998 and full-feature Ridge
 viewed during engineering preflight and cannot be presented as unseen holdout.
 They establish a real feature/training/report chain, not stable information gain.
 
+The predeclared main matrix uses twenty configurations over three separated
+2022/2023/2024 periods, with ten FIT and ten validation sessions per period.
+Backtest `7b2f292c-3334-5c86-916b-7f950a61da4d` runs the independent installed
+wheel at `e7c9d42d36cbc97ad56e64bf0231031f552c6ff9`. Its first three bounded
+invocations completed 150, 688 and 978 actions; execution is still in progress.
+The last two invocations took 2,138.98 and 1,988.55 seconds, including 472.02
+and 610.68 seconds of reconciliation. Their 1,800-second admission budgets
+exclude final drain, whose measured overrun remains visible. No main-matrix
+completion or selected-holdout result is claimed here.
+
 
 ## Continuous research reliability engineering
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
-from typing import Iterable, Mapping
+from typing import Callable, Iterable, Mapping
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from market_regime_alpha.research_qualification.domain.backtest import (
@@ -365,10 +365,12 @@ class BacktestExecutor:
         actions: BacktestActionExecutionPort,
         *,
         planner: BacktestExecutionPlanner | None = None,
+        execution_blockers: Callable[[UUID], tuple[str, ...]] | None = None,
     ) -> None:
         self._observations = observations
         self._actions = actions
         self._planner = planner or BacktestExecutionPlanner()
+        self._execution_blockers = execution_blockers
         self.last_invocation: BacktestInvocationStatistics | None = None
 
     def run(self, run: FrozenBacktestRun, *, budget: BacktestExecutionBudget | None = None) -> BacktestExecutionPlan:
@@ -380,7 +382,12 @@ class BacktestExecutor:
     def inspect(self, run: FrozenBacktestRun) -> BacktestExecutionPlan:
         expected = self._planner.compile(run).expected_actions
         observed = self._observations.observe(run, expected)
-        return self._planner.compile(run, observed)
+        plan = self._planner.compile(run, observed)
+        blockers = self._blockers(run)
+        return replace(plan, ready_actions=(), execution_blockers=blockers) if blockers else plan
+
+    def _blockers(self, run: FrozenBacktestRun) -> tuple[str, ...]:
+        return () if self._execution_blockers is None else self._execution_blockers(run.exploratory_backtest_run_id)
 
     def progress(self, run: FrozenBacktestRun) -> BacktestRuntimeProgress:
         return self._observations.runtime_progress(
@@ -396,7 +403,7 @@ class BacktestExecutor:
         try:
             result = self._drive_actions(run, budget=budget, require_unstarted=require_unstarted,
                                          started=started, statistics=statistics)
-            reason = "BUDGET_REACHED" if statistics["budget_reached"] else result.execution_state.value
+            reason = "BLOCKED" if result.execution_blockers else ("BUDGET_REACHED" if statistics["budget_reached"] else result.execution_state.value)
             return result
         finally:
             self.last_invocation = BacktestInvocationStatistics(reason, int(statistics["attempted_actions"]),
@@ -414,6 +421,9 @@ class BacktestExecutor:
                 statistics["reconciliation_seconds"] += perf_counter() - before
         expected = self._planner.compile(run).expected_actions
         observed = observe(run, expected)
+        blockers = self._blockers(run)
+        if blockers:
+            return replace(self._planner.compile(run, observed), ready_actions=(), execution_blockers=blockers)
         if require_unstarted and any(item.state is not BacktestObservedState.ABSENT for item in observed):
             raise BacktestExecutionIntegrityError("backtest run requires no execution evidence; use resume")
         max_transitions = len(expected) * 4 + 1
@@ -437,6 +447,9 @@ class BacktestExecutor:
             # affected owner before later writes, and the entire owner graph
             # before admitting any newly unlocked dependency.
             for ordinal, ready in enumerate(plan.ready_actions, start=1):
+                blockers = self._blockers(run)
+                if blockers:
+                    return replace(plan, ready_actions=(), execution_blockers=blockers)
                 if transitions >= max_transitions:
                     raise BacktestExecutionIntegrityError("Backtest exceeded its bounded canonical transition budget")
                 if budget is not None and (transitions >= budget.maximum_actions or perf_counter() - started >= budget.maximum_seconds):

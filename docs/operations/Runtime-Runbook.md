@@ -1,5 +1,8 @@
 # Runtime operations
 
+> **Status:** CURRENT_ARCHITECTURE
+> **Code Evidence:** `src/market_regime_alpha/interfaces/cli`, `src/market_regime_alpha/interfaces/prospective_service.py`, `src/market_regime_alpha/interfaces/prospective_operation_guard.py`, `src/market_regime_alpha/interfaces/daily_service.py`, `docs/operations/templates`
+
 An independently authorized historical study starts with `mra research
 prepare-historical --plan "$FROZEN_STUDY_PLAN" --wheel "$PINNED_WHEEL"
 --lockfile "$PINNED_LOCKFILE" --source-checkout "$SOURCE_CHECKOUT"
@@ -64,8 +67,108 @@ otherwise the report is descriptive. Empty completed populations remain visible.
 original Artifact owner with a content-bound idempotency key. This projection
 does not create new Outcome labels, Evaluation metrics or model qualification.
 
-> **Status:** CURRENT_ARCHITECTURE
-> **Code Evidence:** `src/market_regime_alpha/interfaces/cli`, `src/market_regime_alpha/interfaces/prospective_service.py`, `src/market_regime_alpha/interfaces/prospective_operation_guard.py`, `src/market_regime_alpha/interfaces/daily_service.py`, `docs/operations/templates`
+The registered `backtest_exploratory_holdout_v12` upgrade adds two append-only
+Backtest facts: a reservation and one opening. Use an exact research backup and
+the existing upgrade plan/apply commands. Drain an older installed executor
+before the upgrade; its original frozen specification and completed facts remain
+unchanged. A maximum-seconds budget stops new actions, but the final complete
+owner reconciliation can extend wall time. Include that drain in the run budget.
+
+Before reading heldout results, freeze a `mra-historical-campaign-boundary-v1`
+Artifact containing the entire development matrix, explicit heldout FIT/purge/
+embargo/validation Calendar dates, future study code and finite selection rule.
+The current contract retains seven controls plus one expanded Ridge candidate,
+selected by all-arm-common validation MAE with ties broken by declared ordinal.
+Use this sequence with the same exact database name/OID flags as above:
+
+```bash
+mra research holdout-reserve --development-run-id "$DEVELOPMENT_RUN" --protocol "$FROZEN_BOUNDARY" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID" --actor-id "$RESEARCH_OPERATOR" --idempotency-key "$RESERVATION_KEY"
+mra research holdout-select --reservation-id "$RESERVATION_ID" --output-plan "$SELECTED_PLAN" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+mra research prepare-historical --plan "$SELECTED_PLAN" --reuse-contracts-from "$DEVELOPMENT_RUN" --wheel "$PINNED_WHEEL" --lockfile "$PINNED_LOCKFILE" --source-checkout "$SOURCE_CHECKOUT" --code-sha "$IMPLEMENTATION_SHA" --output "$HELDOUT_DIRECTORY" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID" --actor-id "$RESEARCH_OPERATOR"
+mra research holdout-open --reservation-id "$RESERVATION_ID" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID" --actor-id "$RESEARCH_OPERATOR" --idempotency-key "$OPENING_KEY"
+mra backtest run --run-id "$HELDOUT_RUN" --maximum-actions 100 --maximum-seconds 600
+mra research holdout-inspect --reservation-id "$RESERVATION_ID" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+```
+
+Selection requires every original development Evaluation to be completed.
+Preparation reuses exact Target, ordered Feature definitions, Candidate,
+Eligibility, rule strategy and Evaluation protocols; new FIT data produce new
+ModelVersions with the selected algorithm/parameters. Opening checks every
+effective arm policy and cost, original Calendar bounds, complete Evaluation
+input/metric identities, and the exact planned Evaluation/Partition/Experiment
+mapping. Reserved runs expose all pending actions but execute none before opening.
+Protocol and selection bytes are checked at execution admission and before
+Outcome source reads; corrupted bytes block execution. Existing Partition access
+facts record actual access. A new Run, Target or Partition cannot relabel the
+reserved economic window as unused. The current protected labels cannot become
+FIT inputs; a later research design needs a separately declared access contract.
+Raw historical bars were already acquired and visible, so this protection is
+exploratory temporal evidence, never formal blindness, LOCKED_OOS or PIT.
+
+## Professional daily data recording contract
+
+`mra research provider-recording-check --contract "$SOURCE_CONTRACT" --recording
+"$RECORDED_RESPONSE" --expected-sha256 "$RECORDING_SHA256"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` validates a bounded local recording without SDK access.
+Add `--capture-product-id "$PROVIDER_PRODUCT_ID" --capture-key "$CAPTURE_KEY"`
+only to store it through the original Market Capture owner in the authorized
+research database. The request resource binds both the semantic contract hash
+and the exact raw recording hash. Capture time comes from the existing database
+clock; historical session dates never become source availability times.
+The Capture Artifact uses envelope v2, containing the complete contract,
+base64 of the exact original recording bytes and their original SHA-256,
+plus the non-sensitive CaptureRequest identity. Replay reconstructs that
+request hash and compares it with the original Capture owner. Envelope v1
+remains decodable with LEGACY_UNVERIFIED request identity; it cannot satisfy
+the exact owner replay check.
+`mra research provider-recording-replay --capture-id "$CAPTURE_ID"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` reloads the Capture owner, verifies its physical
+Artifact, and recovers the same contract and raw-byte identity without writes.
+The local request budget applies to one adapter invocation; its check/decrement
+is synchronized. Canonical Capture idempotency remains responsible for repeated
+requests. This does not implement a paid SDK download budget across restarts.
+
+The version-1 contract requires exact SDK version, sorted stock codes, inclusive
+date bounds, distinct dividend mode, evidenced volume units and timestamp
+meaning, a semantic-evidence hash, and row/byte/request budgets. Currency is
+CNY, prices are CNY per share, timezone is Asia/Shanghai, and `fill_data` must
+be false. Recordings retain `time`, OHLC, volume, amount, preClose, suspendFlag
+and a revision token. Duplicate/conflicting keys, nonfinite values, numeric
+loss, unknown suspension flags and timestamp/date disagreement are rejected.
+Suspended zero bars remain explicitly suspended. Calendar completeness, event
+interval mapping, adjustment equivalence, membership history, publication
+availability and finality still require their original owners and real evidence.
+
+XtQuant documents separate `none`, `front`, `back`, `front_ratio` and
+`back_ratio` modes, and a `fill_data` argument. They must not be collapsed into
+BaoStock adjustment semantics or silently filled observations. Its suspension
+flags distinguish normal, suspended and resumed observations.
+See the [official xtdata API](https://dict.thinktrader.net/nativeApi/xtdata.html).
+This package calls no paid service and imports no XtQuant SDK. Recordings marked
+`LOCAL_PROTOCOL_SUBSTITUTE` prove the local contract only; real professional
+Provider verification remains NOT_RUN. Permissions, history depth, latency,
+fees and permitted data uses require future live verification.
+
+For source comparisons, freeze a separate protocol and retain both sealed
+archives. Reuse `history-inventory` for Calendar/Instrument/gap rosters, then
+canonical Dataset manifests/cells, frozen Model inference, Outcome revisions
+and reconciled Evaluation/Backtest reports in that order. Match exact security,
+session, units, price basis and Target at each layer; mismatches block attribution
+and missing benchmark observations remain missing. Do not compare only headline
+metrics from runs that changed their populations or Targets.
+
+| Experiment | Frozen controls | Deliberate change |
+|---|---|---|
+| Fixed model, changed data | Exact ModelVersion/preprocessing, ordered Features, Target, population and dates | Source facts/revisions and their downstream values |
+| Fixed algorithm, retrained data | Algorithm/version/parameters, training and evaluation protocol, Target and population | Source plus fresh per-fold TrainingRun/ModelVersion |
+| Fixed new data, changed models | Exact sealed Archive, Dataset protocol, Target, split and common population | Predeclared finite model/feature matrix |
+
+Persist every layer's identities, exclusions and access record with the source
+protocol. A source adjustment mismatch requires an explicit verified mapping or
+NOT_ESTIMABLE. The recorded adapter is not a normalization implementation or
+evidence that a professional source supports the historical campaign end to end.
 
 This runbook describes available commands and safety boundaries, not a deployed
 service's current state. Use only the explicitly authorized project/database/
