@@ -55,8 +55,9 @@ mra research daily settle --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "
 mra research daily deliver --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "$OPERATION_PROFILE" --channel feishu
 ```
 
-The first two commands perform Provider I/O and owner writes; delivery sends an
-external request. They require authorization for that actual operational scope.
+Calendar refresh and collection perform Provider I/O and owner writes;
+settlement writes through Outcome/Evaluation owners, and delivery sends an
+external request. All require authorization for that actual operational scope.
 Late Outcome collection retains its actual acquisition time. It cannot alter
 the original Prediction, source revision, Use lifetime or protocol. The automatic
 eight-hour Outcome collection grace remains unchanged; later collection uses the

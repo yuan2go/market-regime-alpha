@@ -8,7 +8,7 @@ the next experiment or deployment. Repository hygiene is complete at the
 implementation recorded in the archive index. Business feature development and
 live configuration changes require their own explicit scope.
 
-## Active: continuous research reliability
+## Engineering delivered: continuous research reliability
 
 The continuous research reliability package starts from main
 `76c19a60f5106dd184a20fdaf46d786629a9cd99`. Development and disposable verification
@@ -33,14 +33,19 @@ these dependency-coherent checkpoints, with the following risk-directed gates:
 - [x] Implement numerical and delivery contracts with compatibility checks.
 - [x] Wire bounded discovery, fairness, health isolation and operational commands.
 - [x] Verify calendar/capacity, frozen recovery, backup/restore and Model lineage.
-- [ ] Run affected PostgreSQL/runtime regressions, static/docs/inventory checks,
+- [x] Run affected PostgreSQL/runtime regressions, static/docs/inventory checks,
   build and independent wheel CLI smoke; retain initial failures and reruns.
-- [ ] Record implementation and final revisions plus five separate gates:
+- [x] Record implementation and final revisions plus five separate gates:
   IMPLEMENTATION, TARGETED_ENGINEERING_VERIFICATION, ORIGINAL_SCOPE_DEPLOYMENT,
   SUSTAINED_REAL_SESSION_PROOF and RESEARCH_VALIDITY.
 
 No synthetic future sessions establish continuity. Naturally elapsed sessions,
 original-scope activation and research adequacy remain independent evidence gates.
+The implementation and isolated verification at
+`622a9f38ad9a3f074662ac7e6b0961181b29bc43` are recorded in
+[Current State](Current-State.md). The final checkpoint adds verification
+documentation only. Original activation, real remote delivery and sustained
+natural-session proof remain unexecuted and require their stated prerequisites.
 
 ## Completed repository maintenance
 

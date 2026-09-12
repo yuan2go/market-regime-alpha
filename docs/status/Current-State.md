@@ -59,10 +59,91 @@ pending and failed facts retain NOT_RUN completion status. The same-model
 lineage CLI reloads FIT/TrainingRun/fitted bytes/Backtest/Use and exact daily
 Prediction/OutcomeRevision/Evaluation/report identities without fitting again.
 
-Verification and final revision evidence are recorded after the targeted gates
-complete. The original operating connection/root are not configured in this
-execution environment; original-scope deployment and real delivery remain
-blocked. No future clock or fixture is credited as a natural session.
+Implementation revision is `622a9f38ad9a3f074662ac7e6b0961181b29bc43`, including
+numerical checkpoints `240815dd17a082539a3a72ce4cff621e3bcb7c70` and
+`c5f8f14c79d952c6ec30788047fb58142783c8c6`. The final documentation checkpoint
+is a descendant with the same executable source. Development used an isolated
+task branch and worktree. No push, PR or merge was
+performed; the original checkout's unrelated IDE modification was preserved.
+No migration was necessary; released SQL, archived evidence and frozen protocol
+bytes are unchanged.
+
+Verification ran with Python 3.12.2, the frozen `uv.lock`, PostgreSQL 16 in a
+separate local Unix-socket cluster and disposable database/root. Contract
+fixtures are engineering evidence. The real operating database, Provider and
+supervised service were not substituted with these fixtures.
+
+| Executed verification | Result and evidence boundary |
+|---|---|
+| `uv sync --frozen --extra dev --extra postgres` | PASS |
+| Numerical reproduction and model/Backtest contracts | Initial 7 FAIL; corrected round-trip group 23 PASS; version dispatch included in later contracts |
+| Notification contracts and local HTTP POST substitute | Initial 18 FAIL; strict response/UNKNOWN/expiry and adapter coverage included in 115 PASS contracts/CLI group; real outbound NOT_RUN |
+| Expanded shared Runtime/Pool/permissions/installation/recovery PostgreSQL regression | First 221 PASS / 5 FAIL; affected suites and capacity consumers rerun 103 PASS; original failures retained |
+| Original-plan daily vertical, delivery recovery, fresh restore and restricted principal closure | 38 PASS; actual dump restore into another database/new root, daily report replay and missing Artifact refusal included |
+| Atomic Artifact/Runtime wrong-owner rollback and lost commit acknowledgement | 2 PASS on real PostgreSQL |
+| Final paging, observations, negative evidence, capacity and validity boundaries | 68 PASS; 130 publication roots plus 130 children across Uses, 256 bounded details and 260 complete facts |
+| Real connection loss/cancellation and injected rollback loss | 5 PASS; original exceptions and replacement pool capacity retained |
+| Receipt query at representative history scale | PASS: 116,147 isolated receipts, 200 reads on one long-lived connection; p95 0.000536 seconds, maximum 0.001486 seconds |
+| `uv run python -m ruff check .`; `uv run python -m mypy` | PASS; mypy checked 652 source files |
+| Inventory regeneration, docs links, repository hygiene and focused tooling tests | PASS; 14 tooling tests |
+| `uv run python -m build --installer uv --dependency-constraints-txt ... --outdir ...` | PASS sdist and wheel; build backend pinned to locally available setuptools 84.0.0 |
+| Fresh wheel environment, hash-checked frozen dependencies, CLI outside checkout | PASS: 12 commands, exact five packaged SQL hashes, schema verification, both backlog queries, missing-model first blocker and evidence verify; 194 table counts unchanged by read commands |
+| `git diff --check` | PASS |
+| Full repository long regression; historical external-scope suite | NOT_RUN; risk-directed affected-owner regression used |
+
+Counts above are separate overlapping runs, not an accumulated test total.
+The final 68-test command was:
+
+```bash
+uv run python -m pytest -o addopts= -q tests/contracts/research_qualification/test_daily_work_discovery_postgres.py tests/contracts/research_qualification/test_daily_observations.py tests/contracts/test_evidence_negative_history.py tests/contracts/research_qualification/test_operational_capacity.py tests/contracts/research_qualification/test_validity_report.py
+uv run python -m pytest -o addopts= -q tests/contracts/test_pool_failure_reliability_postgres.py
+uv run python scripts/repository_inventory.py --write
+uv run python scripts/check_repository_hygiene.py
+uv run python scripts/check_docs_links.py
+uv run python -m pytest -o addopts= -q tests/scripts/test_check_docs_links.py tests/scripts/test_repository_hygiene.py
+```
+
+The wheel SHA-256 is
+`434365d275c78b2fc36f5ad08fcc6c94eedbd1aae5e935b79b3e528db7a7e1a0`.
+Its independent smoke ran `mra --help`, daily/backlog/deliver/calendar/restore
+help, `db bootstrap`, `db verify`, both `research daily backlog` kinds,
+`research daily lineage` and `evidence verify`. Bootstrap was confined to the
+disposable target. An initial smoke assertion incorrectly assumed more than ten
+SQL resources; the corrected check verifies the exact committed five names and
+hashes. Other first-run logs retain local proxy interference, obsolete bounded
+health assertions, invalid scope fixtures, legacy URL parsing, static typing
+failures and their corrected reruns. No failed operational fact was rewritten.
+
+The near-scale measurement isolates receipt SQL cost; it does not measure a
+live Provider, end-to-end operating cadence or sustained installed-service
+performance. Those remain original-scope deployment observations.
+
+The same-model disposable traversal verified FIT Evaluation/Dataset →
+TrainingRun/fitted Artifact → Backtest/report → ExperimentalModelUse →
+Prediction → OutcomeRevision → Evaluation/report with physical verification
+and zero-write replay. The current v3 source protocol names ModelVersion
+`fe47f296-17dc-5654-a9eb-cf149f5b01c9` and Use
+`3a426d5f-702f-56fb-9563-0bc6256b558c`, first eligible Sep-15, with frozen
+20-session/500-observation floors. These identities were read from source,
+not reloaded from the original operating owner in this session.
+
+| Acceptance gate | Current result |
+|---|---|
+| IMPLEMENTATION | PASS: executable owners, composition, CLI and current runbook delivered |
+| TARGETED_ENGINEERING_VERIFICATION | PASS within the isolated contract, PostgreSQL, restore and installed-wheel scopes above |
+| ORIGINAL_SCOPE_DEPLOYMENT | BLOCKED: original connection/root not configured and no session authorization for activation or writes |
+| SUSTAINED_REAL_SESSION_PROOF | NOT_RUN: no original activation or natural-session observation for this implementation |
+| RESEARCH_VALIDITY | NOT_ESTIMABLE: no this-session original-owner evidence reload or naturally matured v3 cohort; no Alpha claim |
+
+The first remaining condition is the original database/Artifact/profile identity
+reload. After explicit operational authorization, follow the existing runbook's
+verified backup, drain, installation/profile preparation, preflight and restart
+sequence; never choose the restore target as writer. Check the same ModelVersion
+with `research daily lineage`, then record complete ledgers for at least three
+natural trading sessions (five preferred), timely publications, exact mature
+Outcomes and report replay. Real remote acceptance and final delivery require
+separate authorized observations. No future clock or fixture counts as one of
+those natural sessions.
 
 ## ModelUse rollover and Validity v3 activation
 
