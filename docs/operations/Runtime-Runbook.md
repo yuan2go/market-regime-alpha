@@ -11,8 +11,13 @@ prepare-historical --plan "$FROZEN_STUDY_PLAN" --wheel "$PINNED_WHEEL"
 "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
 --actor-id "$RESEARCH_OPERATOR"`. The plan pins Archive/seal/template hashes,
 the complete fixed security roster and explicit FIT/purge/embargo/validation
-Calendar dates. The executing package must match the wheel. It writes immutable
-study metadata and predeclares a canonical Backtest; it does not execute one.
+Calendar dates. The executing package must match the wheel. Preparation checks
+all Calendar sessions (including stride gaps and the
+immediate final next-session label) resolve to the selected Archive's captured
+normalization bindings before its seal cutoff. Another Archive's calendar cannot
+substitute; a shared canonical session is valid when both Archives bind it.
+It then writes immutable study metadata and predeclares a canonical Backtest;
+it does not execute one.
 Use the returned `mra backtest run --run-id` and `mra backtest resume --run-id`
 entries for execution and recovery, then the existing report and replay commands.
 Use persistent research storage, with a separate disposable test database.
@@ -213,7 +218,11 @@ when that owner-recorded condition applies. Sealing does not assert bar quality.
 "$RESEARCH_DATABASE_OID"` verifies the frozen roster and Capture bytes, then
 reports Calendar coverage, each security × session × price basis denominator,
 missing/conflicting identities, listing facts, status summaries and revision
-roster hashes. Save stdout in persistent research storage. Missing security
+roster hashes. Request-level Provider failures are attributed to every observed
+session in their exact original request's security, price basis and inclusive
+date range, preserving the original gap identity. This inventory scope is not
+limited to the Feature kernel's 21 sessions; success and failure together remain
+visible as conflicting evidence. Save stdout in persistent research storage. Missing security
 master captures do not remove frozen names from the denominator. The v2 inventory
 hashes sorted UUID bytes for immutable revision rosters; Capture and code/config
 hashes retain source/normalization identity. A counted bar is not necessarily a

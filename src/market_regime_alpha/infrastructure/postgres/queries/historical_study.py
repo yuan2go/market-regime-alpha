@@ -11,6 +11,16 @@ from market_regime_alpha.research_qualification.domain.historical_matrix import 
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 
 
+_ARCHIVE_CALENDAR_BINDING = """EXISTS (
+    SELECT 1 FROM mra.market_capture_trading_session_normalization binding
+    JOIN mra.market_archive_capture_observation observation USING(capture_id)
+    JOIN mra.data_capture capture USING(capture_id)
+    WHERE binding.session_id=session.session_id AND observation.market_archive_id=%s
+      AND observation.known_at<=%s AND capture.recorded_at<=%s
+      AND capture.status='CAPTURED'
+)"""
+
+
 def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan, additional_splits: tuple[HistoricalTimeSplit, ...] = (), step_sessions: int | None = None) -> dict[str, Any]:
     with pool.connection(read_only=True) as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
@@ -27,9 +37,12 @@ def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan,
             windows = (HistoricalTimeSplit(plan.fit_dates,plan.purge_dates,plan.embargo_dates,plan.validation_dates),*additional_splits)
             expected_windows = tuple(p.fit_dates+p.purge_dates+p.embargo_dates+p.validation_dates for p in windows)
             dates = tuple(sorted({day for window in expected_windows for day in window}))
-            sessions = cursor.execute("""SELECT session_id,session_date,open_at,close_at,known_at
-                FROM mra.trading_session WHERE exchange=%s AND session_date BETWEEN %s AND %s
-                ORDER BY session_date""", (archive["exchange_code"], dates[0], dates[-1])).fetchall()
+            calendar_scope = (plan.market_archive_id, seal["knowledge_cutoff"], seal["knowledge_cutoff"])
+            sessions = cursor.execute("SELECT session_id,session_date,open_at,close_at,known_at," + _ARCHIVE_CALENDAR_BINDING + """ AS archive_bound
+                FROM mra.trading_session session WHERE exchange=%s AND session_date BETWEEN %s AND %s
+                ORDER BY session_date""", (*calendar_scope, archive["exchange_code"], dates[0], dates[-1])).fetchall()
+            if any(not row.pop("archive_bound") for row in sessions):
+                raise ValueError("study Calendar lacks selected Archive Capture/normalization bindings")
             for window in expected_windows:
                 if tuple(r["session_date"] for r in sessions if window[0]<=r["session_date"]<=window[-1]) != window:
                     actual = tuple(r["session_date"] for r in sessions if window[0]<=r["session_date"]<=window[-1])
@@ -41,9 +54,11 @@ def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan,
                     raise ValueError("rolling stride must match actual archived Calendar session positions")
             if any(r["known_at"] > seal["knowledge_cutoff"] for r in sessions):
                 raise ArtifactIntegrityError("study Calendar exceeds the frozen Archive knowledge cutoff")
-            next_session = cursor.execute("""SELECT session_id,session_date,known_at FROM mra.trading_session
-                WHERE exchange=%s AND session_date>%s ORDER BY session_date LIMIT 1""", (archive["exchange_code"], dates[-1])).fetchone()
-            if next_session is None or next_session["known_at"] > seal["knowledge_cutoff"]:
+            # Inspect the actual immediate successor before checking provenance;
+            # filtering first could silently skip an unbound/missing label day.
+            next_session = cursor.execute("SELECT session_id,session_date,known_at," + _ARCHIVE_CALENDAR_BINDING + """ AS archive_bound FROM mra.trading_session session
+                WHERE exchange=%s AND session_date>%s ORDER BY session_date LIMIT 1""", (*calendar_scope, archive["exchange_code"], dates[-1])).fetchone()
+            if next_session is None or not next_session.pop("archive_bound") or next_session["known_at"] > seal["knowledge_cutoff"]:
                 raise ValueError("study Calendar must cover the final next-session label")
         strategy = _load_strategy(connection, root["strategy_version_id"], lock=False)
     return {"template": root, "archive": archive, "seal": seal, "sessions": sessions, "target_coverage": next_session, "strategy": strategy}

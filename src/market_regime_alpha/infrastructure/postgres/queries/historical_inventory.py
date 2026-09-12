@@ -8,6 +8,7 @@ from uuid import UUID
 from psycopg.rows import dict_row
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.queries.historical_failures import read_historical_failure_requests
 from market_regime_alpha.research_qualification.ports.artifacts import ResearchArtifactByteStore
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -52,14 +53,16 @@ class PostgresHistoricalInventory:
                 bars = cursor.execute("""SELECT bar_revision_id,instrument_id,session_id,timeframe,price_basis,revision,supersedes_revision_id
                     FROM mra.market_bar_revision bar WHERE capture_id=ANY(%s)
                     AND known_at<=%s ORDER BY instrument_id,session_id,timeframe,price_basis,revision""",(capture_ids,root["knowledge_cutoff"])).fetchall()
-                gaps = cursor.execute("""SELECT gap.* FROM mra.source_gap gap WHERE capture_id=ANY(%s)
-                    OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap binding WHERE binding.market_archive_id=%s AND binding.gap_id=gap.gap_id)
-                    ORDER BY gap_id""",(capture_ids,archive_id)).fetchall()
+                gaps = cursor.execute("""SELECT gap.* FROM mra.source_gap gap WHERE (capture_id=ANY(%s)
+                    OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap binding WHERE binding.market_archive_id=%s AND binding.gap_id=gap.gap_id))
+                    AND gap.known_at<=%s ORDER BY gap_id""",(capture_ids,archive_id,root["knowledge_cutoff"])).fetchall()
                 facts = cursor.execute("""SELECT * FROM mra.instrument_fact_revision WHERE capture_id=ANY(%s) AND fact_kind='LISTING_STATUS'
                     ORDER BY instrument_id,fact_kind,event_start,revision""",(capture_ids,)).fetchall()
                 fact_summary = cursor.execute("""SELECT instrument_id,fact_kind,status_value,count(*) AS count,
                     min(event_start) AS first_event,max(event_start) AS last_event FROM mra.instrument_fact_revision
                     WHERE capture_id=ANY(%s) GROUP BY instrument_id,fact_kind,status_value ORDER BY instrument_id,fact_kind,status_value""",(capture_ids,)).fetchall()
+            failed_requests = read_historical_failure_requests(connection, archive_id, root["knowledge_cutoff"],
+                tuple(g["gap_id"] for g in gaps if g["fact_kind"] == "DATA_CAPTURE" and g["gap_kind"] == "PROVIDER_FAILURE"))
             fact_digest = sha256()
             fact_count = 0
             # Server cursor bounds transport and memory; only immutable identity
@@ -98,8 +101,17 @@ class PostgresHistoricalInventory:
             if bar["timeframe"] == "DAILY":
                 by_bar[(bar["instrument_id"],bar["session_id"],bar["price_basis"])].append(bar)
         by_gap = defaultdict(list)
+        exchange_by_instrument = {s["instrument_id"]:s["exchange"] for s in securities}
         for gap in gaps:
             by_gap[(gap["instrument_id"],gap["session_id"],gap["price_basis"])].append(gap)
+            request = failed_requests.get(gap["gap_id"])
+            if request is not None:
+                # The request's inclusive civil-date bounds select only observed
+                # Archive sessions. This is failure attribution, never new facts.
+                for session in sessions:
+                    if (session["exchange"] == exchange_by_instrument.get(request.instrument_id)
+                            and request.window_start.date() <= session["session_date"] <= request.window_end.date()):
+                        by_gap[(request.instrument_id,session["session_id"],request.price_basis)].append(gap)
         # The frozen static roster is the denominator, including pre-listing days.
         inventory, exclusions = [], []
         for security in securities:

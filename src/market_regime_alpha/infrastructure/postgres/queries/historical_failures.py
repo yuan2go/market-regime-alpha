@@ -9,9 +9,9 @@ from market_regime_alpha.research_qualification.ports.sources import DatasetRequ
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 
 
-def read_historical_failures(connection, archive_id: UUID, cutoff: datetime,
-                            event_cutoff: datetime,
-                            gap_ids: tuple[UUID, ...] | None = None) -> dict[UUID, DatasetRequestFailureContext]:
+def read_historical_failure_requests(connection, archive_id: UUID, cutoff: datetime,
+                                     gap_ids: tuple[UUID, ...] | None = None) -> dict[UUID, DatasetRequestFailureContext]:
+    """Resolve original request identities without imposing a feature window."""
     rows = connection.execute("""
         SELECT gap.gap_id, slice.market_archive_slice_id, slice.content_sha256, slice.scope_key,
             slice.event_window_start, slice.event_window_end, capture.provider_product_id, capture.capture_id,
@@ -42,6 +42,13 @@ def read_historical_failures(connection, archive_id: UUID, cutoff: datetime,
         result[row[0]] = historical_request_failure(slice_id=row[1],slice_sha256=row[2],scope_key=row[3],
             window_start=row[4],window_end=row[5],product_id=row[6],capture_id=row[7],capture_key=row[8],
             slice_request_sha256=row[9],capture_request_sha256=row[10],instrument_id=row[11],identifier=row[12])
+    return result
+
+
+def read_historical_failures(connection, archive_id: UUID, cutoff: datetime,
+                            event_cutoff: datetime,
+                            gap_ids: tuple[UUID, ...] | None = None) -> dict[UUID, DatasetRequestFailureContext]:
+    result = read_historical_failure_requests(connection, archive_id, cutoff, gap_ids)
     if result:
         calendars = connection.execute("""SELECT instrument_id,session_id,close_at FROM (
             SELECT instrument.instrument_id,session.session_id,session.close_at,

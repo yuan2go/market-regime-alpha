@@ -15,6 +15,28 @@ def test_repository_documentation_is_consistent() -> None:
     assert docs_check.validate(docs_check.ROOT) == []
 
 
+def test_imported_delivery_preserves_bytes_and_declares_external_links(tmp_path: Path) -> None:
+    import hashlib
+    import json
+    base = tmp_path / docs_check.DELIVERY_SNAPSHOTS[0]
+    base.mkdir(parents=True)
+    data = b"# Frozen original\n[External](unbundled.json)\n"
+    (base / "report.md").write_bytes(data)
+    manifest = {"schema": "historical-delivery-snapshot-v1", "files": {"report.md": {
+        "size": len(data), "sha256": hashlib.sha256(data).hexdigest()}}, "external_files": {
+        "unbundled.json": {"size": 2, "sha256": hashlib.sha256(b"{}").hexdigest(), "availability": "EXTERNAL_NOT_BUNDLED"}}}
+    path = base / "snapshot-manifest.json"
+    path.write_text(json.dumps(manifest))
+    assert docs_check.check_delivery_snapshots(tmp_path) == []
+    assert docs_check.markdown_files(tmp_path) == []
+    (base / "report.md").write_bytes(data + b"changed")
+    assert any("bytes changed" in e for e in docs_check.check_delivery_snapshots(tmp_path))
+    (base / "report.md").write_bytes(data)
+    manifest["external_files"] = {}
+    path.write_text(json.dumps(manifest))
+    assert any("undeclared frozen delivery link" in e for e in docs_check.check_delivery_snapshots(tmp_path))
+
+
 def test_duplicate_status_is_rejected(tmp_path: Path) -> None:
     doc = tmp_path / "docs" / "a.md"
     doc.parent.mkdir(parents=True)

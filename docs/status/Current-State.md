@@ -8,6 +8,23 @@ research qualification. Verification results must match the affected implementat
 scope; earlier hygiene evidence remains in the archive index.
 
 
+## Research robustness and throughput in progress
+
+The new package starts at `faa67fbaf918fd3fb54c3a9b75cfe2c8a461fb6b`.
+Historical inventory now maps original request-level Provider failures to the
+complete observed security/session/price-basis range, retaining exact gap IDs
+and successful revisions. Historical preparation rejects Calendar facts without
+the selected Archive's Capture/normalization bindings, including the immediate
+final label session, before publishing study inputs. The four disposable
+PostgreSQL boundary cases pass; exact baseline query bodies fail the three
+negative cases and pass the shared-binding case. Adjacent Feature/failure-lineage
+checks also pass. No migration or original research result changed.
+
+The persistent old comparison and protocol hashes have been reloaded. A new,
+separately identified real-data engineering run measures the baseline canonical
+cost. Long-window and new holdout research are not yet completed; follow the
+active [Roadmap](Roadmap.md) rather than the old delivery gates below.
+
 ## Historical research campaign delivered
 
 The independent historical pilot at implementation
@@ -24,7 +41,9 @@ approximately -0.195. Constants retain NOT_ESTIMABLE rank diagnostics. This is a
 tiny descriptive result with STATIC_UNIVERSE / SURVIVORSHIP_LIMITED / retrospective
 knowledge limitations; it establishes neither stable model increment nor formal
 PIT/OOS or economic validity. Feature ablation and protected temporal validation
-remain active work in the [Roadmap](Roadmap.md).
+were incomplete at that pilot cutoff and subsequently completed within the
+limited scope recorded below. The new robustness work is tracked separately in
+the [Roadmap](Roadmap.md).
 
 The independent expansion acquired all 97 frozen BaoStock requests under
 implementation `c8dac4b14789cd828c2f302bc9ded41fa24b1aa0` and sealed archive

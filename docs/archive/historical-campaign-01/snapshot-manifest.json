@@ -1,0 +1,109 @@
+{
+  "external_files": {
+    "records/engineering-verification-09-final.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "dea465082dfbd94c9181deb511fb14a01386163da9a55371c284115354ac509b",
+      "size": 2868
+    },
+    "records/final-evidence-manifest.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "51e5b935b7d84f16bb00da0f91cd51bd87e473d28aab0cd16c765081235ce43b",
+      "size": 369665
+    },
+    "records/historical-campaign-fresh-restore-index-09.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "862f362b2bf3a6b7e9c6906cf85198b79b212fbf67a3bc83ff69aab6a3d3c84c",
+      "size": 4799
+    },
+    "records/historical-delivery-command-index-09.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "72482eb32f3aabb4a1171d82c7a99736def58f2b6063773f9f606c791e5db9e8",
+      "size": 11492
+    },
+    "records/historical-holdout-01-frozen-access-index.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "a6f9cfe7ec4150b0f95fa294e43079106fbc0d229a7bae9949384ffebac6d3bb",
+      "size": 52280
+    },
+    "records/historical-restore-missing-artifact-result-09.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "7358b4bacb2d16c79e8e7209acc835cd4b74c61655e983a88d50a2aea8a2d86c",
+      "size": 1351
+    },
+    "records/historical-restored-zero-business-writes-09.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "7ba55783514e2a595860101670700f5c23e1e8c18dc49e66ab0f3592b2bcc1b1",
+      "size": 34604
+    },
+    "records/historical-trial-roster-final.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "9c6df0befc72cbaadac917a4c5e7d1c7f09a7100db132a4ad4f1bb05aec96284",
+      "size": 394850
+    },
+    "records/model-numeric-boundaries-final-09.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "c1ef83a509a9fbbb1057bcde15f3464a37277dbda768249d9ed8239e52d47ea7",
+      "size": 1035
+    },
+    "reports/historical-campaign-context-01.md": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "ce3d4b334a62f2f43631a78d1e6a70d461de6bb2f6c150557aaa942ee50c2a1e",
+      "size": 8537
+    },
+    "reports/historical-matrix-01/analysis.md": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "414bd58ecf773d30afaccb3279162cf975b1b6957e33b77411f47672ea5d784f",
+      "size": 10769
+    },
+    "reports/historical-matrix-01/comparison.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "753fd098cd40b1c21f1aca873c4c648f6237e800c4e51e068bd48f2a8280ae74",
+      "size": 52418110
+    },
+    "reports/historical-matrix-01/monthly-diagnostics.md": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "5c148b39ba788d594696005091a0cadd4dae2b89cda1a05c97401508f8e2ff58",
+      "size": 3504
+    },
+    "reports/historical-selected-holdout-01/analysis.md": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "89074ec44a3db08cc4e53222d196b0be0a03032066264c863b6bdac7f9f2ffc6",
+      "size": 7892
+    },
+    "reports/historical-selected-holdout-01/comparison.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "ef7b460930bb55c2ae2838a5868bd084e85621d95c607d13d62a3a17e675b3d3",
+      "size": 7526652
+    },
+    "reports/history-data-01/data-summary-v1.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "502d15243b18e77ff47a1bc98ee2478e327b5f10433658a97da0f20038c3399f",
+      "size": 15072
+    },
+    "reports/history-data-01/inventory-v2.json": {
+      "availability": "EXTERNAL_NOT_BUNDLED",
+      "sha256": "c351e3633d00d6962b5fea10ccb1e6278ad8e8d334b185ad6fa20aef8fc46b32",
+      "size": 5232406
+    }
+  },
+  "files": {
+    "README.md": {
+      "sha256": "783771b60813f9809d2c0b62ae682f3323d871861c8179f36e7dbd5fb0040f81",
+      "size": 1144
+    },
+    "records/final-delivery-index.json": {
+      "sha256": "e46ef938a5903bf869f4d3c8e11ce57d01c80232d059916ab2d5fe96c3fdd910",
+      "size": 4706
+    },
+    "reports/final-historical-campaign-01.md": {
+      "sha256": "fa71e01ef5150092671c90c1b3c75bb9dcd88246c24b8dc601168bb5e1b6d09a",
+      "size": 13875
+    },
+    "reports/reproduce-historical-campaign-01.md": {
+      "sha256": "4074d50acfd09ec7ef2e7232d759c3ce31b9815a5ad90a240dfdb550ac9ca3cc",
+      "size": 5353
+    }
+  },
+  "origin": "WP-HISTORICAL-RESEARCH-CAMPAIGN-01",
+  "schema": "historical-delivery-snapshot-v1"
+}
