@@ -8,7 +8,7 @@ the next experiment or deployment. Repository hygiene is complete at the
 implementation recorded in the archive index. Business feature development and
 live configuration changes require their own explicit scope.
 
-## Active: historical research campaign
+## Delivered: historical research campaign
 
 Baseline main is `2e5474342ec14b2dc74704cfa9ef981ffcfec870`. The task authorizes
 independent persistent research database/Artifacts, new research Features and
@@ -79,10 +79,25 @@ Initial boundaries, before any new holdout result is read:
 - [x] Real small-sample daily Backtest/Model/Outcome/Evaluation/report and resume.
 - [x] Bounded historical expansion and explicit ten-feature calculations;
   sealed 2022–2025 archive and real two-period engineering preflight retained.
-- [ ] Protected holdout, finite candidate plans, baseline and ablation execution.
-- [ ] Reconciled paired reports, economic limits and professional-source contracts.
-- [ ] Necessary regression, installed wheel, persistent command/hash indexes,
+- [x] Protected holdout, finite candidate plans, baseline and ablation execution:
+  twenty configurations over three development periods, followed by the one
+  selected expansion plus seven controls on a later ten-session window.
+- [x] Reconciled paired reports, economic limits and professional-source contracts.
+  Main and holdout reports replay without mismatches. Current Ridge does not
+  beat zero on error in any of the four observed windows; the momentum group's
+  small descriptive improvement is a future hypothesis, not an admission.
+- [x] Necessary regression, installed wheel, persistent command/hash indexes,
   implementation/final revisions and six independently reported acceptance gates.
+  Actual fresh restore passed 196 table hashes and 2,114 Artifacts; a missing
+  fitted Artifact was refused, exact bytes restored, and replay/repeated resume
+  left all business table hashes unchanged. No operating writer was switched.
+
+The next research work requires a new experiment and validation arrangement:
+fewer predeclared controls plus the limited momentum hypothesis, longer training
+windows, more months and better historical member/adjustment evidence. The
+accessed holdout cannot be reused for parameter selection. Full-feature stacking
+and further single-feature alpha scans are not supported by these results.
+No such follow-up experiment, paid data access or model promotion was executed.
 
 ## Engineering delivered: continuous research reliability
 
