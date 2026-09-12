@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
+from dataclasses import replace
+
+import pytest
 
 from market_regime_alpha.research_qualification.domain import (
     ArtifactBinding,
@@ -54,6 +57,32 @@ def _feature(value: int, code: str) -> FeatureDefinition:
         code_artifact=_artifact(value + 100),
         config_artifact=_artifact(value + 200),
     )
+
+
+def test_repeated_manifest_parsing_does_not_reuse_changed_bytes_or_frozen_contracts():
+    from market_regime_alpha.shared.time import DecisionTime
+    feature = _feature(10, "intraday_move")
+    materialized = materialize_backtest_dataset(dataset_id=_id(30), dataset_code="exact_parse_inputs",
+        simulated_decision_time=datetime(2026, 1, 5, 7, 0, tzinfo=UTC), universe_revision_id=_id(31),
+        eligibility_policy_id=_id(32), feature_definition_ids=(feature.feature_definition_id,),
+        code_artifact=_artifact(33), config_artifact=_artifact(34), members=(BacktestDatasetMember(
+            _id(20), _id(21), _id(22), (BacktestDatasetFeatureCell(feature.feature_definition_id,
+                FeatureCellStatus.AVAILABLE, "EXACT_ARCHIVED_BAR", BacktestFeatureLineageKind.BAR_REVISION,
+                _id(23), Decimal("0.125")),)),))
+    binding = ArtifactBinding(_id(35), sha256_bytes(materialized.manifest_content), len(materialized.manifest_content))
+    definition = materialized.definition(binding)
+    parsed = parse_decision_input_dataset_manifest(materialized.manifest_content, dataset=definition, feature_definitions=(feature,))
+    assert parse_decision_input_dataset_manifest(materialized.manifest_content, dataset=definition, feature_definitions=(feature,)) == parsed
+    assert parsed.rows[0].cells[0].value == Decimal("0.125")
+    with pytest.raises(ValueError):
+        parse_decision_input_dataset_manifest(materialized.manifest_content.replace(b'"value":"0.125"', b'"value":"NaN"'),
+            dataset=definition, feature_definitions=(feature,))
+    with pytest.raises(ValueError):
+        parse_decision_input_dataset_manifest(materialized.manifest_content,
+            dataset=replace(definition, decision_time=DecisionTime(datetime(2026, 1, 6, 7, 0, tzinfo=UTC))), feature_definitions=(feature,))
+    with pytest.raises(ValueError, match="INTEGER"):
+        parse_decision_input_dataset_manifest(materialized.manifest_content, dataset=definition,
+            feature_definitions=(replace(feature, value_type=FeatureValueType.INTEGER),))
 
 
 def test_empty_population_retains_real_calendar_lineage_without_inventing_a_row():

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 import json
 import re
 from typing import Any, Iterable
@@ -179,6 +180,22 @@ def parse_decision_input_dataset_manifest(
 ) -> DecisionInputDatasetManifest:
     if not isinstance(content, bytes):
         raise TypeError("Dataset manifest content must be exact bytes")
+    # Only immutable pure parsing is reused. Exact bytes and complete frozen
+    # Dataset/Feature contracts form the key; owner/physical reads stay live.
+    # Large manifests bypass the eight-entry, 2 MiB-per-input cache. A changed
+    # byte, source, formula, code/config binding or cutoff produces a new key.
+    parser = _cached_manifest if len(content) <= 2 * 1024 * 1024 else _parse_manifest
+    return parser(content, dataset=dataset, feature_definitions=feature_definitions)
+
+
+@lru_cache(maxsize=8)
+def _cached_manifest(content: bytes, *, dataset: DecisionInputDatasetDefinition,
+                     feature_definitions: tuple[FeatureDefinition, ...]) -> DecisionInputDatasetManifest:
+    return _parse_manifest(content, dataset=dataset, feature_definitions=feature_definitions)
+
+
+def _parse_manifest(content: bytes, *, dataset: DecisionInputDatasetDefinition,
+                    feature_definitions: tuple[FeatureDefinition, ...]) -> DecisionInputDatasetManifest:
     try:
         payload = json.loads(
             content.decode("utf-8"),
@@ -400,12 +417,14 @@ def _parse_rows(
     if not isinstance(raw, list):
         raise ValueError("rows must be an array")
     source_map = {item.dataset_source_id: item for item in sources}
+    source_keys = {str(identity): identity for identity in source_map}
     rows = tuple(
         _parse_row(
             item,
             feature_ids=feature_ids,
             definitions=definitions,
             source_map=source_map,
+            source_keys=source_keys,
         )
         for item in raw
     )
@@ -441,6 +460,7 @@ def _parse_row(
     feature_ids: tuple[UUID, ...],
     definitions: dict[UUID, FeatureDefinition],
     source_map: dict[UUID, DatasetSource],
+    source_keys: dict[str, UUID],
 ) -> DecisionInputDatasetRow:
     if not isinstance(raw, dict):
         raise ValueError("Dataset row must be an object")
@@ -463,7 +483,7 @@ def _parse_row(
     if not isinstance(raw["cells"], list):
         raise ValueError("Dataset row cells must be an array")
     cells = tuple(
-        _parse_cell(item, definitions=definitions, source_map=source_map)
+        _parse_cell(item, definitions=definitions, source_map=source_map, source_keys=source_keys)
         for item in raw["cells"]
     )
     if tuple(item.feature_definition_id for item in cells) != feature_ids:
@@ -480,6 +500,7 @@ def _parse_cell(
     *,
     definitions: dict[UUID, FeatureDefinition],
     source_map: dict[UUID, DatasetSource],
+    source_keys: dict[str, UUID],
 ) -> FeatureCell:
     if not isinstance(raw, dict):
         raise ValueError("Feature cell must be an object")
@@ -501,7 +522,15 @@ def _parse_cell(
     reason_code = raw["reason_code"]
     if not isinstance(reason_code, str) or not _REASON_CODE.fullmatch(reason_code):
         raise ValueError("Feature cell reason_code has an invalid format")
-    source_ids = _uuid_tuple(raw["source_ids"], "source_ids")
+    # Repeated peer/window references resolve to already authenticated UUIDs in
+    # this manifest only. Noncanonical spellings retain the original parser.
+    raw_sources = raw["source_ids"]
+    if not isinstance(raw_sources, list):
+        raise ValueError("source_ids must be an array")
+    source_ids = tuple(source_keys[item] if isinstance(item, str) and item in source_keys else _uuid(item, "source_ids")
+                       for item in raw_sources)
+    if source_ids != tuple(sorted(set(source_ids), key=str)):
+        raise ValueError("source_ids must be unique and sorted")
     source_records = tuple(source_map.get(item) for item in source_ids)
     if any(item is None for item in source_records):
         raise ValueError("Feature cell references unknown Dataset sources")
