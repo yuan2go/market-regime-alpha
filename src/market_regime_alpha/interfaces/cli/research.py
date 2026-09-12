@@ -1,6 +1,7 @@
 """Research declarations over the existing canonical execution entry points."""
 
 import argparse
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -40,6 +41,13 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
             return prepare_historical_archive(app, HistoricalAcquisitionPlan.from_bytes(arguments.plan.read_bytes()),
                 wheel=arguments.wheel, lockfile=arguments.lockfile, source_checkout=arguments.source_checkout,
                 code_sha=arguments.code_sha, output=arguments.output, actor_id=arguments.actor_id)
-        plan = HistoricalStudyPlan.from_bytes(arguments.plan.read_bytes())
+        content=arguments.plan.read_bytes()
+        root=json.loads(content)
+        if isinstance(root,dict) and root.get("schema")=="mra-historical-matrix-v1":
+            from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalMatrixPlan
+            matrix=HistoricalMatrixPlan.from_bytes(content)
+            return prepare_study(app,matrix.baseline,wheel=arguments.wheel,lockfile=arguments.lockfile,
+                source_checkout=arguments.source_checkout,code_sha=arguments.code_sha,output=arguments.output,actor_id=arguments.actor_id,matrix=matrix)
+        plan = HistoricalStudyPlan.from_bytes(content)
         return prepare_study(app, plan, wheel=arguments.wheel, lockfile=arguments.lockfile,
             source_checkout=arguments.source_checkout, code_sha=arguments.code_sha, output=arguments.output, actor_id=arguments.actor_id)

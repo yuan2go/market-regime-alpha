@@ -383,6 +383,7 @@ class PostgresBacktestQueryPort:
             provenance_sha256=str(root["provenance_sha256"]),
             sample_algorithm_version=int(root["sample_algorithm_version"]),
             sample_input_key=str(root["sample_input_key"]),
+            specification_schema_version=int(root["specification_schema_version"]),
         )
         if str(specification.content_sha256) != str(root["current_specification_sha256"]) or str(specification.definition_sha256) != str(
             root["definition_sha256"]

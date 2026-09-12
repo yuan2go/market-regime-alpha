@@ -714,7 +714,7 @@ class BacktestSpecification:
     provenance_sha256: ContentHash | str
     sample_algorithm_version: int = 1
     sample_input_key: str = "ROOT_RANDOM_SEED"
-    specification_schema_version: int = field(default=1, init=False)
+    specification_schema_version: int = 1
     definition_version: int = field(default=1, init=False)
     evidence_lane: str = field(default="EXPLORATORY_RETROSPECTIVE", init=False)
     formal_provider_state: str = field(default="BLOCKED", init=False)
@@ -739,6 +739,8 @@ class BacktestSpecification:
     def __post_init__(self) -> None:
         if not _CODE.fullmatch(self.run_code):
             raise ValueError("run_code has an invalid format")
+        if type(self.specification_schema_version) is not int or self.specification_schema_version not in {1,2}:
+            raise ValueError("Backtest specification supports exact roster v1 or explicit Model subset v2")
         if isinstance(self.generation, bool) or self.generation < 1:
             raise ValueError("generation must be positive")
         if not self.hypothesis.strip():

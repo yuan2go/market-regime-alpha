@@ -7,10 +7,11 @@ from psycopg.rows import dict_row
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
 from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import _load_strategy
 from market_regime_alpha.research_qualification.domain.historical_study import HistoricalStudyPlan
+from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalTimeSplit
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 
 
-def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan) -> dict[str, Any]:
+def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan, additional_splits: tuple[HistoricalTimeSplit, ...] = (), step_sessions: int | None = None) -> dict[str, Any]:
     with pool.connection(read_only=True) as connection:
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         with connection.cursor(row_factory=dict_row) as cursor:
@@ -23,12 +24,20 @@ def read_study_dependencies(pool: TargetPostgresPool, plan: HistoricalStudyPlan)
                     or seal["content_sha256"] != plan.market_archive_seal_sha256
                     or archive["lane"] != "RETROSPECTIVE_BACKFILL"):
                 raise ArtifactIntegrityError("HISTORICAL_STUDY_DEPENDENCY_IDENTITY_MISMATCH")
-            dates = plan.fit_dates + plan.purge_dates + plan.embargo_dates + plan.validation_dates
+            windows = (HistoricalTimeSplit(plan.fit_dates,plan.purge_dates,plan.embargo_dates,plan.validation_dates),*additional_splits)
+            expected_windows = tuple(p.fit_dates+p.purge_dates+p.embargo_dates+p.validation_dates for p in windows)
+            dates = tuple(sorted({day for window in expected_windows for day in window}))
             sessions = cursor.execute("""SELECT session_id,session_date,open_at,close_at,known_at
                 FROM mra.trading_session WHERE exchange=%s AND session_date BETWEEN %s AND %s
                 ORDER BY session_date""", (archive["exchange_code"], dates[0], dates[-1])).fetchall()
-            if tuple(r["session_date"] for r in sessions) != dates:
-                raise ValueError("study session roster must cover every real Calendar session in its interval")
+            for window in expected_windows:
+                if tuple(r["session_date"] for r in sessions if window[0]<=r["session_date"]<=window[-1]) != window:
+                    raise ValueError("each study split must cover every real Calendar session in its interval")
+            if additional_splits:
+                index={r["session_date"]:i for i,r in enumerate(sessions)}
+                if step_sessions is None or any(index[current.fit_dates[0]]-index[previous.fit_dates[0]]!=step_sessions
+                    for previous,current in zip(windows,windows[1:])):
+                    raise ValueError("rolling stride must match actual archived Calendar session positions")
             if any(r["known_at"] > seal["knowledge_cutoff"] for r in sessions):
                 raise ArtifactIntegrityError("study Calendar exceeds the frozen Archive knowledge cutoff")
             next_session = cursor.execute("""SELECT session_id,session_date,known_at FROM mra.trading_session

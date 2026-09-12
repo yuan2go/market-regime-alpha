@@ -33,6 +33,20 @@ Empty populations retain zero rows and exact Calendar lineage in the versioned
 empty Dataset manifest; they are never filled with synthetic observations.
 This finite baseline entry is exploratory; it does not confer PIT or formal OOS.
 
+The same `prepare-historical` entry accepts `mra-historical-matrix-v1`: a nested
+baseline plan, explicit `additional_splits`, `step_sessions` from the archived
+Calendar, and `ridge_candidates` containing a unique name, ordered factor names
+and a decimal-string `ridge_alpha` (`0.1`, `1`, or `10`). It retains all seven
+controls and allows at most twenty configurations and six separated rolling
+periods. Each period has the same FIT/validation lengths, fresh planned model
+versions and explicit maturity purge/embargo. Overlapping periods are rejected
+before declarations by this bounded builder. They are not implicitly repaired.
+The emitted Backtest input-v2 freezes exact Model feature subsets. Input-v1 and
+historical specifications keep their full ordered feature-roster semantics.
+Existing research databases use `backtest_model_subsets_v11` with an exact
+research backup; this migration changes no historical business rows. Matrix
+validation is exploratory and does not by itself provide a protected holdout.
+
 > **Status:** CURRENT_ARCHITECTURE
 > **Code Evidence:** `src/market_regime_alpha/interfaces/cli`, `src/market_regime_alpha/interfaces/prospective_service.py`, `src/market_regime_alpha/interfaces/prospective_operation_guard.py`, `src/market_regime_alpha/interfaces/daily_service.py`, `docs/operations/templates`
 

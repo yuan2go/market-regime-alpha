@@ -535,7 +535,6 @@ def _require_training_root(
         JOIN mra.exploratory_backtest_run AS backtest
           ON backtest.exploratory_backtest_run_id = %s
          AND backtest.target_definition_id = model.target_definition_id
-         AND backtest.feature_count = model.feature_count
          AND mra.model_backtest_feature_rosters_match(
              model.model_id, backtest.exploratory_backtest_run_id
          )

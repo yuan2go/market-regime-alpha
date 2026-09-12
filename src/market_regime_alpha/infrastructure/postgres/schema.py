@@ -185,6 +185,11 @@ _HISTORICAL_ARCHIVE_MIGRATION_NAME: Final = "006_historical_archive_inventory"
 _HISTORICAL_ARCHIVE_UPGRADE_CODE: Final = "historical_archive_inventory_v10"
 _HISTORICAL_ARCHIVE_BUNDLE_SHA256: Final = "bd838d8ac883c4a2adb2883af14ae63ce67174beaee659dea21132dbbbaedeaa"
 _HISTORICAL_ARCHIVE_CATALOG_SHA256: Final = "9af76e21da4067db5a90609cb7e34844a3ea762464dcf7c923d0dffd8102f96c"
+_MODEL_SUBSETS_MIGRATION_NAME: Final = "007_backtest_model_subsets"
+_MODEL_SUBSETS_UPGRADE_CODE: Final = "backtest_model_subsets_v11"
+_MODEL_SUBSETS_BUNDLE_SHA256: Final = "af8de6bda7051916fa868d3a08139ccef7214d9dcf0540c29dc55f35d79a9334"
+_MODEL_SUBSETS_CATALOG_SHA256: Final = "b432dcdc914f329106ac778198f6ba1fa49be17fbb012acbc3729deaa3b1d2db"
+
 
 _SCHEMA_COMMENT: Final = (
     "Market Regime Alpha MRA_REFOUNDATION_1 unreleased draft authority schema"
@@ -1273,6 +1278,9 @@ class SchemaManager:
         self._historical_archive_sql = _read_package_text("migrations", f"{_HISTORICAL_ARCHIVE_MIGRATION_NAME}.sql")
         if sha256_bytes(self._historical_archive_sql.encode("utf-8")) != _HISTORICAL_ARCHIVE_BUNDLE_SHA256:
             raise SchemaChecksumMismatchError("HISTORICAL_ARCHIVE_BUNDLE_CHANGED: register an exact incremental route")
+        self._model_subsets_sql = _read_package_text("migrations", f"{_MODEL_SUBSETS_MIGRATION_NAME}.sql")
+        if sha256_bytes(self._model_subsets_sql.encode("utf-8")) != _MODEL_SUBSETS_BUNDLE_SHA256:
+            raise SchemaChecksumMismatchError("MODEL_SUBSETS_BUNDLE_CHANGED: register an exact incremental route")
         self._seed_sql = _read_package_text("seeds", "001_reference_seed.sql")
         self.baseline_checksum = sha256_bytes(self._baseline_sql.encode("utf-8"))
         self.seed_checksum = sha256_bytes(self._seed_sql.encode("utf-8"))
@@ -1301,6 +1309,7 @@ class SchemaManager:
             connection.execute(self._daily_closure_sql)
             connection.execute(self._static_research_sql)
             connection.execute(self._historical_archive_sql)
+            connection.execute(self._model_subsets_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1317,6 +1326,7 @@ class SchemaManager:
             _insert_daily_closure_migration(connection)
             _insert_static_research_migration(connection)
             _insert_historical_archive_migration(connection)
+            _insert_model_subsets_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return verification
@@ -1836,6 +1846,7 @@ class SchemaManager:
             connection.execute(self._daily_closure_sql)
             connection.execute(self._static_research_sql)
             connection.execute(self._historical_archive_sql)
+            connection.execute(self._model_subsets_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1852,6 +1863,7 @@ class SchemaManager:
             _insert_daily_closure_migration(connection)
             _insert_static_research_migration(connection)
             _insert_historical_archive_migration(connection)
+            _insert_model_subsets_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return RecreateResult(
@@ -1922,7 +1934,7 @@ class SchemaManager:
         if expected_upgrade is not None and catalog_checksum != expected_upgrade.next_catalog_sha256:
             raise CatalogDriftError("UPGRADE_TARGET_CATALOG_MISMATCH")
         expected_catalog = (
-            _HISTORICAL_ARCHIVE_CATALOG_SHA256
+            _MODEL_SUBSETS_CATALOG_SHA256
             if expected_upgrade is None
             else expected_upgrade.next_catalog_sha256
         )
@@ -1934,18 +1946,19 @@ class SchemaManager:
                 _REVISION_GAP_CATALOG_SHA256,
                 _DAILY_CATALOG_SHA256,
                 _DAILY_CLOSURE_CATALOG_SHA256,
-                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256,
+                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256,
             },
             with_daily=expected_catalog
-            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256},
+            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
             with_daily_closure=expected_catalog
-            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256},
-            with_static_research=expected_catalog in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256},
-            with_historical_archive=expected_catalog == _HISTORICAL_ARCHIVE_CATALOG_SHA256,
+            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
+            with_static_research=expected_catalog in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
+            with_historical_archive=expected_catalog in {_HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
+            with_model_subsets=expected_catalog == _MODEL_SUBSETS_CATALOG_SHA256,
         )
         if (
             expected_upgrade is None
-            and catalog_checksum != _HISTORICAL_ARCHIVE_CATALOG_SHA256
+            and catalog_checksum != _MODEL_SUBSETS_CATALOG_SHA256
         ):
             raise CatalogDriftError("POST_BASELINE_CATALOG_MISMATCH: installed catalog is not the exact registered correction")
         _verify_primary_keys(connection, tables)
@@ -2357,6 +2370,13 @@ def _insert_historical_archive_migration(connection: psycopg.Connection[Any]) ->
     )
 
 
+def _insert_model_subsets_migration(connection: psycopg.Connection[Any]) -> None:
+    connection.execute(
+        "INSERT INTO mra.schema_migrations (version, name, checksum, transactional, epoch_name) VALUES (7, %s, %s, true, %s)",
+        (_MODEL_SUBSETS_MIGRATION_NAME, _MODEL_SUBSETS_BUNDLE_SHA256, SCHEMA_EPOCH),
+    )
+
+
 def _verify_migration_registry(
     connection: psycopg.Connection[Any],
     baseline_checksum: str,
@@ -2366,6 +2386,7 @@ def _verify_migration_registry(
     with_daily_closure: bool = False,
     with_static_research: bool = False,
     with_historical_archive: bool = False,
+    with_model_subsets: bool = False,
 ) -> None:
     rows = connection.execute(
         """
@@ -2393,6 +2414,8 @@ def _verify_migration_registry(
         expected.append((5, _STATIC_RESEARCH_MIGRATION_NAME, _STATIC_RESEARCH_BUNDLE_SHA256, True, SCHEMA_EPOCH))
     if with_historical_archive:
         expected.append((6, _HISTORICAL_ARCHIVE_MIGRATION_NAME, _HISTORICAL_ARCHIVE_BUNDLE_SHA256, True, SCHEMA_EPOCH))
+    if with_model_subsets:
+        expected.append((7, _MODEL_SUBSETS_MIGRATION_NAME, _MODEL_SUBSETS_BUNDLE_SHA256, True, SCHEMA_EPOCH))
     actual = [tuple(row) for row in rows]
     if actual != expected:
         raise CatalogDriftError(
@@ -2415,14 +2438,15 @@ def _verify_exact_migration_registry(
                 _REVISION_GAP_CATALOG_SHA256,
                 _DAILY_CATALOG_SHA256,
                 _DAILY_CLOSURE_CATALOG_SHA256,
-                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256,
+                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256,
             },
             with_daily=catalog_checksum
-            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256},
+            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
             with_daily_closure=catalog_checksum
-            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256},
-            with_static_research=catalog_checksum in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256},
-            with_historical_archive=catalog_checksum == _HISTORICAL_ARCHIVE_CATALOG_SHA256,
+            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
+            with_static_research=catalog_checksum in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
+            with_historical_archive=catalog_checksum in {_HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256},
+            with_model_subsets=catalog_checksum == _MODEL_SUBSETS_CATALOG_SHA256,
         )
     except CatalogDriftError as exc:
         raise UnsafeOperationalUpgradeError(
@@ -2815,7 +2839,19 @@ def _wp18q_operational_upgrade_definitions(
     )
     if v10.additive_bundle_sha256 != _HISTORICAL_ARCHIVE_BUNDLE_SHA256:
         raise OperationalUpgradeIntegrityError("HISTORICAL_ARCHIVE_BUNDLE_CHANGED: register an exact incremental route")
-    return (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10)
+    v11 = _OperationalUpgradeDefinition(
+        upgrade_code=_MODEL_SUBSETS_UPGRADE_CODE,
+        prior_baseline_sha256=v10.next_baseline_sha256,
+        prior_catalog_sha256=v10.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=v10.next_reference_vocabulary_sha256,
+        next_baseline_sha256=v10.next_baseline_sha256,
+        next_catalog_sha256=_MODEL_SUBSETS_CATALOG_SHA256,
+        next_reference_vocabulary_sha256=v10.next_reference_vocabulary_sha256,
+        additive_sql=_read_package_text("migrations", f"{_MODEL_SUBSETS_MIGRATION_NAME}.sql"),
+    )
+    if v11.additive_bundle_sha256 != _MODEL_SUBSETS_BUNDLE_SHA256:
+        raise OperationalUpgradeIntegrityError("MODEL_SUBSETS_BUNDLE_CHANGED: register an exact incremental route")
+    return (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11)
 
 
 def _split_postgres_statements(payload: str) -> tuple[str, ...]:
@@ -3244,6 +3280,8 @@ def _update_operational_upgrade_metadata(
         _insert_static_research_migration(connection)
     if definition.upgrade_code == _HISTORICAL_ARCHIVE_UPGRADE_CODE:
         _insert_historical_archive_migration(connection)
+    if definition.upgrade_code == _MODEL_SUBSETS_UPGRADE_CODE:
+        _insert_model_subsets_migration(connection)
     connection.execute(
         "ALTER TABLE mra.schema_epoch DISABLE TRIGGER schema_epoch_append_only"
     )
