@@ -217,6 +217,22 @@ def test_unsettled_commitments_are_not_outcome_execution_evidence():
     assert observer._outcome(action, decisions, partial).state is BacktestObservedState.MATCHED_INCOMPLETE
 
 
+def test_empty_outcome_roster_requires_exact_zero_decision_and_runtime_evidence():
+    from types import SimpleNamespace
+    from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import PostgresBacktestExecutionObservationPort, _scope
+    from market_regime_alpha.research_qualification.domain.backtest_execution import BacktestActionKind
+    action=next(a for a in BacktestExecutionPlanner().compile(_run()).expected_actions if a.kind is BacktestActionKind.SETTLE_OUTCOME)
+    observer=PostgresBacktestExecutionObservationPort(None)
+    observer._decisions=SimpleNamespace(verify=lambda identity: SimpleNamespace(matched=True))
+    decisions={_scope(action):[{"decision_run_id":UUID(int=9001),"commitment_count":0}]}
+    assert observer._outcome(action,decisions,{}).state is BacktestObservedState.ABSENT
+    assert observer._outcome(action,decisions,{},empty_runtime_recorded=True).state is BacktestObservedState.MATCHED_COMPLETE
+    observer._decisions=SimpleNamespace(verify=lambda identity: SimpleNamespace(matched=False))
+    assert observer._outcome(action,decisions,{},empty_runtime_recorded=True).state is BacktestObservedState.MISMATCH
+    decisions[_scope(action)][0]["commitment_count"]=1
+    assert observer._outcome(action,decisions,{},empty_runtime_recorded=True).state is BacktestObservedState.MATCHED_INCOMPLETE
+
+
 @pytest.mark.parametrize("missing", ("sample_roster", "reproducibility_roster"))
 def test_current_model_root_hashes_do_not_replace_registered_input_reload(missing):
     from market_regime_alpha.infrastructure.postgres.queries.backtest_execution import PostgresBacktestExecutionObservationPort

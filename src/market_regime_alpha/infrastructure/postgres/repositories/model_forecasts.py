@@ -16,6 +16,7 @@ from market_regime_alpha.decision_support.ports import (
     PreparedModelForecastInputs,
 )
 from market_regime_alpha.infrastructure.postgres.queries.model_forecast_inputs import (
+    _empty_model_forecast,
     _load_root,
 )
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -175,7 +176,17 @@ class PostgresModelForecastRepository:
             (forecast_group_id,),
         ).fetchall()
         if not rows:
-            raise InferenceAuthorityIntegrityError("Model Forecast roster is absent")
+            empty = _empty_model_forecast(self._connection, forecast_group_id, lock=lock)
+            if empty is None or empty[0] != model_version_id:
+                raise InferenceAuthorityIntegrityError("Model Forecast roster is absent or differs")
+            return ModelForecastReconciliation(
+                forecast_group_id=forecast_group_id,
+                model_version_id=model_version_id,
+                forecast_count=0,
+                binding_count=0,
+                binding_roster_sha256=canonical_json_sha256(()),
+                matched=True,
+            )
         forecast_count = int(rows[0][0])
         binding_count = sum(row[2] is not None for row in rows)
         roster_hash = canonical_json_sha256(
