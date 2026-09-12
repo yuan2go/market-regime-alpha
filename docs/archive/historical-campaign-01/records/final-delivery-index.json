@@ -1,0 +1,96 @@
+{
+  "schema": "mra-historical-final-delivery-index-v1",
+  "work_package": "WP-HISTORICAL-RESEARCH-CAMPAIGN-01",
+  "completed_at": "2026-09-12T17:24:48.690746+00:00",
+  "revisions": {
+    "schema": "mra-historical-final-git-scope-v1",
+    "baseline_sha": "2e5474342ec14b2dc74704cfa9ef981ffcfec870",
+    "development_execution_sha": "e7c9d42d36cbc97ad56e64bf0231031f552c6ff9",
+    "implementation_sha": "81f1ce47508c30e25f9e7dfe104ac2bf77641375",
+    "final_sha": "4934e87a436595c3e61c070c486633e946672f2f",
+    "branch": "agent/wp-historical-research-campaign-01",
+    "worktree_status": "CLEAN",
+    "baseline_is_ancestor": true,
+    "final_changes_from_implementation": [
+      "docs/architecture/Authority-Map.md",
+      "docs/architecture/Canonical-Overall-Design.md",
+      "docs/architecture/Data-and-Evidence-Architecture.md",
+      "docs/status/Current-State.md",
+      "docs/status/Roadmap.md"
+    ],
+    "git_diff_check": "PASS",
+    "original_checkout": {
+      "head": "10689a4db772be5a546a64448fcc6f39f6988412",
+      "branch": "agent/wp-portfolio-execution-authority-01",
+      "unrelated_modified_path_preserved": ".idea/modules.xml",
+      "agent_edited_or_staged_that_path": false
+    },
+    "push": "NOT_RUN",
+    "pull_merge_rewrite": "NOT_RUN",
+    "pull_request": "NOT_RUN"
+  },
+  "status": {
+    "ENGINEERING_VERIFICATION": "PASS_TARGETED_AND_ACTUAL_RESTORE",
+    "REAL_HISTORICAL_EXECUTION": "PASS",
+    "TEMPORAL_VALIDATION": "PASS_EXPLORATORY_ONLY_NOT_FORMAL_PIT_OR_LOCKED_OOS",
+    "MODEL_INCREMENTAL_VALUE": "NOT_ESTABLISHED",
+    "ECONOMIC_VALIDITY": "NOT_ESTIMABLE",
+    "PROFESSIONAL_PROVIDER_READINESS": "CONTRACT_AND_LOCAL_CAPTURE_REPLAY_PASS_REAL_PROVIDER_NOT_RUN"
+  },
+  "primary_report": "reports/final-historical-campaign-01.md",
+  "primary_report_sha256": "fa71e01ef5150092671c90c1b3c75bb9dcd88246c24b8dc601168bb5e1b6d09a",
+  "commands": "records/historical-delivery-command-index-09.json",
+  "trials": "records/historical-trial-roster-final.json",
+  "file_manifest": "records/final-evidence-manifest.json",
+  "file_manifest_sha256": "51e5b935b7d84f16bb00da0f91cd51bd87e473d28aab0cd16c765081235ce43b",
+  "backup": {
+    "schema": "mra-historical-backup-index-v1",
+    "source_sha": "81f1ce47508c30e25f9e7dfe104ac2bf77641375",
+    "database": {
+      "cluster_identity": "7681924516459622681",
+      "name": "mra_historical_campaign_01_20260912",
+      "oid": 7866337,
+      "owner": "yuan",
+      "server_version": "16.15 (Homebrew)"
+    },
+    "backup_sha256": "b10d2451fbd62f7a11eb858c298e18fbdeef1a1f3c464f4b5cadde32688b5996",
+    "backup_size_bytes": 491973099,
+    "artifact_count": 2114,
+    "artifact_roster_sha256": "de1b32c4e52c3b50b338dcd99cfd442526ba3f115867dd5149cca132c3ea9dee",
+    "table_count": 196,
+    "verified_at": "2026-09-12 16:43:50.776236+00",
+    "receipt_file": "backups/historical-campaign-final-v12/receipt.json",
+    "receipt_file_sha256": "9063e6726618e25d981a9d06e92aaccde1b7dbec853bf760fe5d5d8a70ab48e8",
+    "command": "mra evidence backup --directory <persistent-root>/backups/historical-campaign-final-v12 --expected-database-name mra_historical_campaign_01_20260912 --expected-database-oid 7866337 --minimum-free-bytes 1073741824",
+    "command_exit_code": 0,
+    "original_operating_scope_backup": "NOT_RUN",
+    "restored_writer_switch": "NOT_RUN"
+  },
+  "fresh_restore": "records/historical-campaign-fresh-restore-index-09.json",
+  "zero_business_writes": "records/historical-restored-zero-business-writes-09.json",
+  "negative_test": "records/historical-restore-missing-artifact-result-09.json",
+  "first_failures_and_reruns": [
+    "records/engineering-checkpoint-03.json",
+    "records/engineering-checkpoint-04.json",
+    "records/engineering-checkpoint-05.json",
+    "records/engineering-checkpoint-06.json",
+    "records/engineering-checkpoint-09.json",
+    "records/holdout-v12-upgrade-index.json",
+    "records/historical-matrix-01-selected-model-lineage-index.json",
+    "verification/historical-final-hygiene-02.log",
+    "verification/historical-final-hygiene-rerun-03.log"
+  ],
+  "first_remaining_conditions": {
+    "model_value": "Limited independent dates, static survivorship-limited universe, no stable simple-baseline advantage",
+    "economics": "Missing verified execution/account/capital/inventory/fillability path",
+    "professional_provider": "No authorized real professional sample; unit/adjustment/member/availability/finality and usage conditions require real verification"
+  },
+  "not_run": [
+    "Operating deployment/upgrade/write",
+    "Paid Provider calls",
+    "Real outbound",
+    "Trading",
+    "Full repository long regression"
+  ],
+  "reproduce": "reports/reproduce-historical-campaign-01.md"
+}

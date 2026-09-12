@@ -1,5 +1,10 @@
 # Historical archive — opt-in, non-normative
 
+The [historical campaign 01 delivery snapshot](historical-campaign-01/README.md)
+contains the external final report, delivery index and reproduction instructions.
+It preserves their original delivery cutoff; referenced external evidence is not
+included and historical validation claims have not been rerun for publication.
+
 > **Status:** HISTORICAL
 
 Do not load this archive as default Agent context. None of its task orders,
