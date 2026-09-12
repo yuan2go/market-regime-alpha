@@ -192,6 +192,8 @@ from market_regime_alpha.infrastructure.postgres.operational_diagnostics import 
 from market_regime_alpha.infrastructure.postgres.queries.backtest_diagnostics import PostgresBacktestDiagnosticsSourcePort
 from market_regime_alpha.infrastructure.postgres.queries.prospective_health import PostgresProspectiveHealthReadPort
 from market_regime_alpha.research_qualification.application.backtest_diagnostics import BacktestDiagnosticsApplication
+from market_regime_alpha.research_qualification.application.historical_comparison import HistoricalComparisonApplication
+from market_regime_alpha.infrastructure.postgres.queries.historical_comparison import PostgresHistoricalComparisonInputs
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
     PostgresBacktestQueryPort,
 )
@@ -351,6 +353,7 @@ class TargetApplication:
     evidence: EvidenceApplication
     operational_diagnostics: PostgresOperationalDiagnostics
     backtest_diagnostics: BacktestDiagnosticsApplication
+    historical_comparison: HistoricalComparisonApplication
     runtime: RuntimeApplication
     artifacts: ArtifactApplication
     market: MarketApplication
@@ -614,6 +617,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_diagnostics=BacktestDiagnosticsApplication(
             PostgresBacktestDiagnosticsSourcePort(pool), backtest_reports,
         ),
+        historical_comparison=HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool),backtest_reports,
+            PostgresBacktestDiagnosticsSourcePort(pool),backtest_specifications),
         evidence=EvidenceApplication(
             PostgresEvidenceSnapshotPort(pool),
             FilesystemEvidenceIntegrity(settings.artifact_root),

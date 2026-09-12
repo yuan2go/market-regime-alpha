@@ -43,6 +43,15 @@ def test_subset_requires_frozen_v2_and_completes_original_training_and_replay(ta
             assert c.execute("SELECT count(*) FROM mra.model_training_run WHERE model_id=%s",(catalog["model"].model_id,)).fetchone()==(1 if version==2 else 0,)
         if version==2:
             assert app.backtest_replay.verify(spec.exploratory_backtest_run_id).matched
+            with app._pool.connection(read_only=True) as c:
+                before=c.execute("SELECT (SELECT count(*) FROM mra.command_receipt),(SELECT count(*) FROM mra.audit_event)").fetchone()
+            comparison=app.historical_comparison.project(spec.exploratory_backtest_run_id)
+            assert comparison==app.historical_comparison.project(spec.exploratory_backtest_run_id)
+            assert len(comparison["statistics"]["common_population"])==32
+            assert len(comparison["input_roster"])==64
+            assert {p["model_version_id"] for p in comparison["input_roster"] if p["arm_id"]==spec.arms[0].exploratory_backtest_arm_id}=={None}
+            with app._pool.connection(read_only=True) as c:
+                assert c.execute("SELECT (SELECT count(*) FROM mra.command_receipt),(SELECT count(*) FROM mra.audit_event)").fetchone()==before
         # A separately registered Feature outside the frozen Backtest roster
         # cannot qualify just because the Model uses fewer columns.
         foreign=replace(extra,feature_definition_id=uuid4(),feature_code="foreign_daily_control")
@@ -52,3 +61,19 @@ def test_subset_requires_frozen_v2_and_completes_original_training_and_replay(ta
         app.research_models.register_model(foreign_model,_context("foreign-model"))
         with app._pool.connection(read_only=True) as c:
             assert c.execute("SELECT mra.model_backtest_feature_rosters_match(%s,%s)",(foreign_model.model_id,spec.exploratory_backtest_run_id)).fetchone()==(False,)
+        if version == 2:
+            from market_regime_alpha.infrastructure.artifacts.local import LocalArtifactStore, ArtifactStoreError
+            with app._pool.connection(read_only=True) as c:
+                digest = c.execute(
+                    "SELECT manifest_content_sha256 FROM mra.dataset JOIN mra.exploratory_backtest_dataset USING(dataset_id) "
+                    "WHERE exploratory_backtest_run_id=%s ORDER BY dataset_id LIMIT 1",
+                    (spec.exploratory_backtest_run_id,),
+                ).fetchone()[0]
+            path = LocalArtifactStore(settings.artifact_root).object_path(digest)
+            original_bytes = path.read_bytes()
+            try:
+                path.write_bytes(b"corrupt")
+                with pytest.raises(ArtifactStoreError, match="SIZE_MISMATCH"):
+                    app.historical_comparison.project(spec.exploratory_backtest_run_id)
+            finally:
+                path.write_bytes(original_bytes)

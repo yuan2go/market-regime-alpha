@@ -44,6 +44,22 @@ status summaries reduced the same scope to 3.05 seconds / 187 MB. The first
 inventory and its measurements remain retained; the operating database was not
 written.
 
+The ten-factor engineering preflight at implementation
+`1963df3bc40add349ad5dd7bb43f935f5e01c810` completed Backtest
+`2ff87208-ba56-572e-8aa9-fd890211fc12`: eight arms, two separated periods,
+64 Datasets, fourteen fresh ModelVersions, forty Evaluations and 246 actions.
+The independent wheel stopped after one action and resumed to completion;
+the published report replays without mismatches. Continuation took 543.87 seconds,
+including 125.87 seconds of reconciliation, with peak memory about 143 MB.
+The earlier preflight declaration failure is preserved separately.
+
+Its four validation dates have 118 common observations of 128 expected.
+Zero MAE is about 0.01732, original Ridge v1/v2 0.01998 and full-feature Ridge
+0.01949. Mean daily Rank IC is approximately -0.01836 for original Ridge and
+-0.00554 for full Ridge; constants remain NOT_ESTIMABLE. These four dates were
+viewed during engineering preflight and cannot be presented as unseen holdout.
+They establish a real feature/training/report chain, not stable information gain.
+
 
 ## Continuous research reliability engineering
 

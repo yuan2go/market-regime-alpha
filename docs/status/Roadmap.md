@@ -36,7 +36,7 @@ Initial boundaries, before any new holdout result is read:
   single-feature Ridge v1/v2 (alpha 1, seed 18). Merge only proved equivalents.
 - After baseline execution, add ten explicit daily Features: intraday return,
   adjusted close returns 1/5/20 sessions, volatility 20, volume and amount
-  activity 5 versus 20, benchmark-relative returns 5/20 and cross-sectional
+  activity 5 versus 20, static-peer-relative returns 5/20 and cross-sectional
   return-5 position. Adjusted cross-day features require separately declared
   Provider price semantics; unsupported dependencies remain unavailable.
 - At most 20 candidate configurations: baseline controls, finite alpha

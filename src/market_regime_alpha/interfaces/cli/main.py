@@ -350,7 +350,7 @@ def main(
 
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     if arguments.area == "research":
-        if arguments.research_command in {"prepare-historical", "prepare-history-data", "history-inventory"}:
+        if arguments.research_command in {"prepare-historical", "prepare-history-data", "history-inventory", "history-compare"}:
             from market_regime_alpha.interfaces.cli.research import execute_research
             return execute_research(settings, arguments)
         from market_regime_alpha.interfaces.cli.daily import dispatch_daily

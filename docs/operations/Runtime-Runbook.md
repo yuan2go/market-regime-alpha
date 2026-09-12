@@ -51,6 +51,19 @@ Existing research databases use `backtest_model_subsets_v11` with an exact
 research backup; this migration changes no historical business rows. Matrix
 validation is exploratory and does not by itself provide a protected holdout.
 
+`mra research history-compare --run-id "$RUN_ID" --expected-database-name
+"$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"`
+projects exact completed fold Evaluation inputs and their original Outcome
+revisions. It reconciles the Backtest, retains full/own/common populations and
+every excluded day/name, and reports errors, daily Rank IC, distributions,
+fold/month slices, paired differences and security error concentration. Constant
+prediction ranks are NOT_ESTIMABLE. The five-session, 1,000-draw paired bootstrap
+requires ten effective blocks and owner-verified contiguous Calendar windows;
+otherwise the report is descriptive. Empty completed populations remain visible.
+`--publish --actor-id "$RESEARCH_OPERATOR"` stores deterministic JSON through the
+original Artifact owner with a content-bound idempotency key. This projection
+does not create new Outcome labels, Evaluation metrics or model qualification.
+
 > **Status:** CURRENT_ARCHITECTURE
 > **Code Evidence:** `src/market_regime_alpha/interfaces/cli`, `src/market_regime_alpha/interfaces/prospective_service.py`, `src/market_regime_alpha/interfaces/prospective_operation_guard.py`, `src/market_regime_alpha/interfaces/daily_service.py`, `docs/operations/templates`
 

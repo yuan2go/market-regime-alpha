@@ -12,6 +12,12 @@ from market_regime_alpha.research_qualification.domain.historical_study import H
 
 
 def add_historical_parser(commands) -> None:
+    comparison=commands.add_parser("history-compare")
+    comparison.add_argument("--run-id",required=True,type=UUID)
+    comparison.add_argument("--expected-database-name",required=True)
+    comparison.add_argument("--expected-database-oid",required=True,type=int)
+    comparison.add_argument("--publish",action="store_true")
+    comparison.add_argument("--actor-id",default="historical-research-operator")
     inventory = commands.add_parser("history-inventory")
     inventory.add_argument("--archive-id", required=True, type=UUID)
     inventory.add_argument("--seal-id", required=True, type=UUID)
@@ -33,6 +39,15 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
     if identity.database_oid != arguments.expected_database_oid:
         raise ValueError("research database OID differs from operator intent")
     with bootstrap_application(settings) as app:
+        if arguments.research_command=="history-compare":
+            payload=app.historical_comparison.project(arguments.run_id)
+            if arguments.publish:
+                from market_regime_alpha.interfaces.historical_study import _json
+                from market_regime_alpha.runtime.application import CommandContext, ActorType
+                artifact=app.artifacts.publish(_json(payload),media_type="application/json",context=CommandContext(
+                    "historical-comparison:"+str(payload["projection_sha256"]),ActorType.OPERATOR,arguments.actor_id,"HISTORICAL_COMPARISON"))
+                return {"projection":payload,"artifact_id":artifact.artifact_id,"content_sha256":artifact.content_sha256,"size_bytes":artifact.size_bytes}
+            return payload
         if arguments.research_command == "history-inventory":
             return app.historical_inventory.inspect(arguments.archive_id, arguments.seal_id)
         if arguments.research_command == "prepare-history-data":
