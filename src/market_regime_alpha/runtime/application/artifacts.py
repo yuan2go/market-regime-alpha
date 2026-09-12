@@ -14,6 +14,7 @@ from market_regime_alpha.runtime.application.service import (
 from market_regime_alpha.runtime.errors import ArtifactByteStoreError, ArtifactIntegrityError
 from market_regime_alpha.runtime.ports import (
     ArtifactByteStore,
+    AttemptClaim,
     ArtifactRecord,
     ArtifactVerificationRecord,
     ByteVerification,
@@ -57,6 +58,7 @@ class ArtifactApplication:
         expected_sha256: str | None = None,
         retention_until: datetime | None = None,
         pin_reason_code: str | None = None,
+        runtime_claim: AttemptClaim | None = None,
     ) -> ArtifactRecord:
         if pin_reason_code is not None and not _CODE.fullmatch(pin_reason_code):
             raise ValueError("pin_reason_code has an invalid format")
@@ -78,6 +80,7 @@ class ArtifactApplication:
             raise ArtifactIntegrityError("bytes did not verify before database binding")
         request_hash = canonical_json_sha256(
             {
+                **({"runtime_attempt_id": runtime_claim.attempt_id, "fence": runtime_claim.fence_token} if runtime_claim is not None else {}),
                 "published": published,
                 "retention_until": retention_until,
                 "pin_reason_code": pin_reason_code,
@@ -98,6 +101,8 @@ class ArtifactApplication:
                     uow.artifacts.get(UUID(receipt.result_aggregate_id)),
                     replayed=True,
                 )
+            if runtime_claim is not None:
+                uow.runtime.lock_live_claim(runtime_claim, expected_step_kind="RECORD_EVIDENCE")
             artifact = uow.artifacts.register(
                 artifact_id=uuid4(),
                 published=published,
@@ -120,6 +125,7 @@ class ArtifactApplication:
                 aggregate_id=str(artifact.artifact_id),
                 aggregate_version=1,
                 result_hash=result_hash,
+                runtime_claim=runtime_claim,
             )
             _append_artifact_audit(
                 uow,
@@ -129,7 +135,10 @@ class ArtifactApplication:
                 action="REGISTER_ARTIFACT",
                 before_version=None,
                 after_version=1,
+                runtime_claim=runtime_claim,
             )
+            if runtime_claim is not None:
+                uow.runtime.succeed_attempt(runtime_claim, receipt_id=receipt.receipt_id, result_hash=result_hash)
             uow.commit()
             return artifact
 
@@ -654,6 +663,7 @@ def _append_artifact_audit(
     action: str,
     before_version: int | None,
     after_version: int | None,
+    runtime_claim: AttemptClaim | None = None,
 ) -> None:
     uow.audit.append(
         audit_event_id=uuid4(),
@@ -666,6 +676,7 @@ def _append_artifact_audit(
         reason_code=context.reason_code,
         before_version=before_version,
         after_version=after_version,
+        runtime_claim=runtime_claim,
     )
 
 

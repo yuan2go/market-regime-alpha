@@ -8,6 +8,110 @@ service's current state. Use only the explicitly authorized project/database/
 user-job scope. Never stop an unknown process, substitute a restored writer, or
 reopen a terminal failed Run. Repository maintenance does not authorize deployment.
 
+## Daily reliability operations
+
+Use the installed `mra` belonging to the exact approved profile. The existing
+`archive prospective serve --daily-plan-template ...` wires daily prediction,
+Outcome recovery and notification discovery into its one serial Runtime loop.
+Daily and prospective work alternate first access to the unchanged tick time
+budget. Daily Prediction/Outcome step budgets and per-phase elapsed times are
+reported separately. Health query failures report HEALTH_QUERY_FAILED and do
+not erase completed business results; guard failures stop further writes.
+
+These read-only entries locate complete Runtime denominators, original plans,
+cross-Use work and the first same-model evidence condition:
+
+```bash
+mra research daily backlog --kind outcome --page-size 64
+mra research daily backlog --kind delivery --channel feishu --page-size 32
+mra research daily delivery-status --plan "$ORIGINAL_PUBLISHED_PLAN" --channel feishu
+mra research daily lineage --model-version-id "$FROZEN_MODEL_VERSION_ID"
+mra research daily data-ready --plan "$FROZEN_DAILY_PLAN"
+mra research daily report --plan "$ORIGINAL_PUBLISHED_PLAN"
+mra research daily replay --plan "$ORIGINAL_PUBLISHED_PLAN"
+mra research validity daily --protocol-version 3
+```
+
+Continue an Outcome cursor with all three returned fields:
+`--after-priority`, `--after-requested-at`, `--after-run-id`. Delivery cursors
+use only the latter two. Cursors are opaque scan positions; no saved cursor
+grants permission or hides the complete counts. Delivery history includes old
+SUCCEEDED Runs whose legacy local receipt may remain unverified. A separate
+newest-work probe reserves an opportunity for a currently valid report.
+
+Default daily health renders the most recent 128 publication/abstention roots
+and their Outcome children. It always reports complete Runtime counts and marks
+truncated scope details PARTIAL_DETAIL. Use the backlog cursor for recovery
+and `observations` for an explicit full-history research export; a partial health
+view is not the research denominator. Unattributable corrupt history is reported
+separately and blocks a full-cohort validity claim.
+
+The original calendar owner can refresh without running a prediction:
+
+```bash
+mra research daily refresh-calendar --plan "$FROZEN_DAILY_PLAN" --operation-config "$OPERATION_PROFILE"
+mra research daily collect-outcome --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "$OPERATION_PROFILE" --maximum-steps 16
+mra research daily settle --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "$OPERATION_PROFILE" --maximum-steps 16
+mra research daily deliver --plan "$ORIGINAL_PUBLISHED_PLAN" --operation-config "$OPERATION_PROFILE" --channel feishu
+```
+
+The first two commands perform Provider I/O and owner writes; delivery sends an
+external request. They require authorization for that actual operational scope.
+Late Outcome collection retains its actual acquisition time. It cannot alter
+the original Prediction, source revision, Use lifetime or protocol. The automatic
+eight-hour Outcome collection grace remains unchanged; later collection uses the
+explicit original-plan command. Terminal failures require an existing explicit
+successor contract; UNKNOWN external effects are inspected without blind retry.
+
+Notification content and request identity bind the exact published report.
+New business expiry is the Prediction Target start, checked again immediately
+before sending. Old frozen expiry bytes remain unchanged, but sending still
+obeys the earlier Target boundary. Feishu webhook success means remote
+ACCEPTED, with final delivery UNKNOWN and no remote message identity supplied
+by the [documented webhook ACK](https://open.feishu.cn/document/client-docs/bot-v3/add-custom-bot).
+New v2 local evidence binds report/request/attempt/response
+hashes and actual time; ACK Artifact, receipt, audit and completion share the
+original transaction. A lost commit acknowledgement is recovered by reading
+that completion. Old local-hash delivery claims remain
+LEGACY_DELIVERY_CLAIM_UNVERIFIED. True delivery requires independent channel
+evidence and cannot be inferred from Runtime SUCCEEDED.
+
+To inspect operational reachability, supply measured scenario durations:
+
+```bash
+mra research validity daily --protocol-version 3 --collection-budget-seconds "$COLLECTION_SECONDS" --backup-budget-seconds "$BACKUP_SECONDS" --publication-budget-seconds "$PUBLICATION_SECONDS"
+```
+
+Each budget is a positive finite number of seconds; omission means
+NOT_ESTIMABLE. The publication window starts after the captured previous close,
+the observation time and the original Model-use's effective time; missing owner
+time is NOT_ESTIMABLE. This read-only scenario excludes windows that cannot fit
+the budget and applies the existing frozen sample floors and buffers to the
+remaining capacity. READY is scenario feasibility, never promised future
+observations. EXPECTED_INSUFFICIENT and NOT_ESTIMABLE remain distinct. A
+successor must be a separately authorized future owner registration and protocol;
+no command extends an existing Use or joins cohorts.
+
+For an authorized restore drill, provision an empty disposable PostgreSQL 16
+database separately. Bind its name/OID/cluster and a new Artifact root in private
+configuration, then use the exact dump SHA from the source backup receipt:
+
+```bash
+mra evidence fresh-restore --disposable --bundle "$VERIFIED_BACKUP_BUNDLE" --expected-database-name "$DISPOSABLE_DATABASE_NAME" --expected-database-oid "$DISPOSABLE_DATABASE_OID" --expected-cluster-identity "$DISPOSABLE_CLUSTER_ID" --expected-backup-sha256 "$PINNED_BACKUP_SHA256"
+mra evidence restore-check --bundle "$VERIFIED_BACKUP_BUNDLE"
+```
+
+Fresh restore rejects the source database/root, existing target relations or
+custom namespaces, competing connections and wrong dump/scope identities. It
+holds the existing exclusive writer reservation during actual
+`pg_restore --single-transaction` and Artifact copy. Verification checks the
+installed schema, exact table hashes, complete physical roster and owner report
+replay, including published empty results. Pending/failed histories remain
+preserved with completion replay NOT_RUN; integrity PASS is not completion.
+Failures preserve the disposable target for diagnosis and never make it a writer.
+The original backup refresh/drain/profile/restart flow below remains the
+operational deployment entry; this drill does not activate or restart it.
+
 ## Preflight and inspection
 
 Keep `MRA_DATABASE_URL`, `MRA_ARTIFACT_ROOT`, Provider credentials and the operation

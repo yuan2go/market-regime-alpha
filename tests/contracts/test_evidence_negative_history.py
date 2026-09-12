@@ -34,3 +34,22 @@ def test_inventory_integrity_preserves_negative_execution_without_promoting_repl
     assert observation['completion_replay_mismatch_codes'] == codes
     assert observation['execution_state'] == state.value
     assert replay.matched is False and replay.mismatch_count == len(codes)
+
+
+@pytest.mark.parametrize('state', ['FAILED_TERMINAL', 'PENDING_MATURITY', 'PUBLICATION_PENDING'])
+def test_daily_pending_or_failed_integrity_does_not_claim_completed_replay(state):
+    snapshot = {'artifacts': [], 'archives': [], 'backtests': [],
+                'database': {}, 'observed_at': '2026-09-05T18:00:00Z'}
+    application = EvidenceApplication(
+        SimpleNamespace(snapshot=lambda: snapshot),
+        SimpleNamespace(verify=lambda _: {'matched': True, 'mismatch_count': 0}),
+        Path('local-artifacts'), object(), lambda _: None, lambda _: None,
+        lambda: {'ledger': [{'run_id': uuid4(), 'state': state, 'replay': {'state': 'NOT_RUN'}}]},
+    )
+    result = application.verify()
+    assert result['matched'] is True
+    row = result['reconciliations'][0]
+    assert row['integrity_matched'] is True
+    assert row['completion_replay_matched'] is None
+    assert row['completion_replay_state'] == 'NOT_RUN'
+    assert row['execution_state'] == state

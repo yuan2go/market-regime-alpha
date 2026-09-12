@@ -83,7 +83,9 @@ def test_restricted_runtime_login_completes_prediction_maturity_recovery_and_rep
                 "record_research_disposition",
             ):
                 patch.setattr(DailyResearchOperations, name, wrap(getattr(DailyResearchOperations, name)))
-            vertical(target_database_url, tmp_path, False, True, patch, record_property)
+            # Restore has a separate target/pool. This routing fixture must only
+            # authenticate original daily owner commands in its own database.
+            vertical(target_database_url, tmp_path, False, True, patch, record_property, perform_restore=False)
         with original_connection(runtime_pool, read_only=True) as c:
             assert c.execute(
                 "SELECT has_table_privilege('mra.model_version','INSERT'),has_table_privilege('mra.schema_migrations','INSERT'),has_table_privilege('mra.provider_qualification_decision','INSERT')"

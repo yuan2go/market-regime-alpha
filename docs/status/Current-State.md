@@ -7,6 +7,63 @@ This page describes checked-out implementation, not an operational database or
 research qualification. Verification results must match the affected implementation and consumer
 scope; earlier hygiene evidence remains in the archive index.
 
+## Continuous research reliability engineering
+
+The current development baseline is main
+`76c19a60f5106dd184a20fdaf46d786629a9cd99`. This package changes the existing
+daily/Runtime composition; it does not activate an installation, mutate the
+original operating database or send a real notification. The operational
+cutoffs below remain historical observations, not this package's deployment.
+
+The service gives current predictions and pending Outcomes separate bounded
+work opportunities and alternates daily/prospective first access to the existing
+tick wall-clock budget. Outcome work uses exact keyset pages across all Model
+Uses. Notifications inspect the newest outstanding publication independently
+of a bounded history page; UNKNOWN and old unverified success claims remain
+visible without another POST. Local cursors retain no authorization or business
+state; a restart rediscovers original PostgreSQL work.
+
+Per-tick scope reads no longer enumerate the complete Artifact roster twice.
+Startup and backup still verify full physical bytes; installed source identities
+and principal privileges, fences, resources and backup age are rechecked before
+actions. Successful identity checks are not a new unbounded cache. Failed
+read-only observations retain committed owner results; safety rejection remains
+sticky and blocks subsequent writes. Pool and writer-admission cleanup preserve
+the original exception and return broken connections for replacement.
+
+Feishu accepts only explicit integer success codes with consistent response
+types and no duplicate JSON keys. Its webhook ACK is ACCEPTED with final
+delivery UNKNOWN and no invented remote ID. New v2 local response artifacts
+bind report, request, attempt, response digest and database time. Accepted
+response Artifact, Receipt, Audit and Runtime completion commit atomically.
+Old v1 response bytes remain readable and unmodified; the former local hash
+claim is presented as LEGACY_DELIVERY_CLAIM_UNVERIFIED.
+
+Membership readiness now reads the complete Selection evidence roster, not only
+a Classification header. The existing calendar owner has an explicit refresh
+CLI. Validity includes a separate measured-budget scenario over exact captured
+windows and the frozen sample/buffer floors. Missing measurements return
+NOT_ESTIMABLE; a missed first window does not erase sufficient later capacity.
+No Use expiry, cohort, threshold, online model or frozen protocol is changed.
+
+New Ridge format v2 preserves binary64 parameters through fit/serialization/
+load/predict and refuses unrepresentable nonconstant scales before publication.
+Version dispatch is wired through the Backtest adapter. Format v1 decoding and
+the existing installed ModelVersion retain their original semantics.
+
+The existing evidence owner can fresh-restore a pinned dump into an explicitly
+empty disposable database and new root, then verify schema, full table hashes,
+Artifact roster and daily report/replay. It never selects that database as the
+operational writer. Daily integrity and completion replay are reported separately;
+pending and failed facts retain NOT_RUN completion status. The same-model
+lineage CLI reloads FIT/TrainingRun/fitted bytes/Backtest/Use and exact daily
+Prediction/OutcomeRevision/Evaluation/report identities without fitting again.
+
+Verification and final revision evidence are recorded after the targeted gates
+complete. The original operating connection/root are not configured in this
+execution environment; original-scope deployment and real delivery remain
+blocked. No future clock or fixture is credited as a natural session.
+
 ## ModelUse rollover and Validity v3 activation
 
 The authorized original-database owner maintenance is complete. Exactly one
@@ -78,9 +135,9 @@ This is a lifecycle failure, not a request to wait for more observations.
 
 The read-only feasibility projection and successor/cohort guards preserve v1/v2
 bytes. A long-lived successor Use and v3 require actual owner registration and a
-new database-clock declaration. The original database's authentication boundary
-currently prevents that registration; no runtime privilege is expanded and no
-v3 is declared from a fixture or an unregistered identity.
+new database-clock declaration. At that previous cutoff, authentication
+prevented registration. The later owner-authorized rollover above supersedes
+that blocker; no fixture or unregistered identity declares a real protocol.
 
 The observed pre-open empty-response failure has a narrow positive-evidence
 reconciliation. The original terminal Run remains failed. Future successful
@@ -113,12 +170,12 @@ with cadence, financial semantics and the 120-second guard unchanged. Its new
 backup, mirror, preflight and two actual ticks passed. Complete future one-minute
 window capacity remains unobserved; no terminal work was reopened.
 
-Performance and backup recovery contracts pass their bounded observations. The
-overall reliability/cohort exit gate is **NO** until owner maintenance is
-authorized, a real successor ModelUse is registered and immutable future v3 is
-declared. The reviewed maintenance remains unexecuted; HBA and runtime grants
-remain unchanged. One completed real session still leaves sustained proof
-BLOCKED_BY_ELAPSED_REAL_TIME and MODEL_VALUE NOT_ESTIMABLE / ALPHA_PROVEN NO.
+At that previous cutoff, performance and backup recovery contracts passed their
+bounded observations. The reliability/cohort exit gate remained **NO** pending
+owner maintenance, a successor ModelUse and immutable future v3. Those maintenance
+conditions were subsequently resolved by the rollover above. One completed real
+session at the previous cutoff left sustained proof BLOCKED_BY_ELAPSED_REAL_TIME
+and MODEL_VALUE NOT_ESTIMABLE / ALPHA_PROVEN NO.
 See the [immutable closure observation](../archive/Operational-Reliability-Cohort-Closure-2026-09-11.md)
 for exact source, deployment, performance, failures and validation receipts.
 

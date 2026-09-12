@@ -35,7 +35,7 @@ def test_service_uses_the_existing_continuation_for_each_wakeup(monkeypatch):
     guard_calls = []
     guard = SimpleNamespace(
         verify_startup=lambda app: {"ready": True},
-        snapshot=lambda: guard_calls.append("supervisor"),
+        operation_scope=lambda: guard_calls.append("supervisor"),
         validate_scope=lambda scope: guard_calls.append("composition"),
         before_action=lambda: guard_calls.append("claim"),
         backup_snapshot_at=None, backup_verified_at=None,
@@ -52,7 +52,7 @@ def test_service_uses_the_existing_continuation_for_each_wakeup(monkeypatch):
             raise ValueError("incomplete Runtime roster before canonical recovery")
         return health
     application = SimpleNamespace(
-        evidence=SimpleNamespace(inventory=lambda: {"scope": "canonical"}),
+        evidence=SimpleNamespace(operation_scope=lambda: {"scope": "canonical"}),
         prospective_health=SimpleNamespace(inspect=inspect_after_owner_recovery),
     )
     @contextmanager

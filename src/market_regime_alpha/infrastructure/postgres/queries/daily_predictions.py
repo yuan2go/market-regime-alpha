@@ -24,6 +24,9 @@ from market_regime_alpha.research_qualification.domain.daily_prediction import D
 from market_regime_alpha.research_qualification.domain.experimental_model_use import ExperimentalModelUseRecord
 from market_regime_alpha.research_qualification.ports.daily_prediction import (
     DailyOutcomeWorkItem,
+    DailyOutcomeCursor,
+    DailyPublicationCursor,
+    DailyDeliveryWorkItem,
     DailySessionWorkItem,
 )
 from market_regime_alpha.research_qualification.ports.artifacts import ResearchArtifactByteStore
@@ -95,6 +98,34 @@ class PostgresDailyPredictionReads:
         self._pool = pool
         self._byte_store = byte_store
         self._inputs = PostgresDailyFeatureInputReadPort(pool, byte_store)
+
+    def delivery_work_items(self, channel: str, *, limit: int = 32, after: DailyPublicationCursor | None = None, recent: bool = False) -> tuple[DailyDeliveryWorkItem, ...]:
+        from market_regime_alpha.infrastructure.postgres.queries.daily_delivery import delivery_work_items
+        return delivery_work_items(self._pool, self._byte_store, channel, limit=limit, after=after, recent=recent)
+
+    def delivery_work_counts(self, channel: str) -> dict[str, int]:
+        from market_regime_alpha.infrastructure.postgres.queries.daily_delivery import delivery_work_counts
+        return delivery_work_counts(self._pool, channel)
+
+    def unfinished_delivery_channels(self) -> tuple[str, ...]:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute("""SELECT DISTINCT split_part(run.fire_key, ':', 3)
+                FROM mra.runtime_run run JOIN mra.runtime_schedule schedule USING(schedule_id)
+                WHERE schedule.schedule_code ~ '^daily-delivery-[0-9a-f]{32}-[a-z][a-z0-9_-]{0,31}$'
+                  AND run.state IN ('QUEUED','RUNNING','WAITING') ORDER BY 1""").fetchall()
+        return tuple(row[0] for row in rows)
+
+    def delivery_attempt_id(self, run_id: UUID, attempt_no: int) -> UUID:
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute("""
+                SELECT attempt.attempt_id FROM mra.runtime_attempt attempt
+                JOIN mra.runtime_step step USING(step_id)
+                WHERE step.run_id=%s AND step.implementation='research.daily_delivery.deliver-report'
+                  AND attempt.attempt_no=%s
+            """, (run_id, attempt_no)).fetchall()
+        if len(rows) != 1:
+            raise ArtifactIntegrityError("daily delivery response has no exact Runtime attempt")
+        return rows[0][0]
 
     def experimental_model_use_record(self, identity: UUID) -> dict[str, Any]:
         """Reload immutable Model-use fields and hash through their canonical owner."""
@@ -193,6 +224,10 @@ class PostgresDailyPredictionReads:
         assert row is not None
         return row[0]
 
+    def model_training_lineage(self, model_version_id: UUID) -> dict[str, Any]:
+        from market_regime_alpha.infrastructure.postgres.queries.model_lineage import model_training_lineage
+        return model_training_lineage(self._pool, self._byte_store, model_version_id)
+
     def operational_ledger_rows(self, *, complete_history: bool = False) -> dict[str, Any]:
         """Bounded operational read by default; explicit research export keeps history."""
         if type(complete_history) is not bool:
@@ -202,16 +237,26 @@ class PostgresDailyPredictionReads:
             with connection.cursor(row_factory=dict_row) as cursor:
                 now = cursor.execute("SELECT clock_timestamp() AS observed_at").fetchone()
                 assert now is not None
+                counts = cursor.execute("""SELECT split_part(s.schedule_code,'-',2) AS work_kind,
+                    r.state, count(*) AS count
+                    FROM mra.runtime_run r JOIN mra.runtime_schedule s USING(schedule_id)
+                    WHERE s.schedule_code ~ '^daily-(model|outcome|abstention)-[0-9a-f]{32}$'
+                    AND r.runtime_mode='SHADOW' AND s.runtime_mode='SHADOW'
+                    GROUP BY work_kind,r.state ORDER BY work_kind,r.state""").fetchall()
+                selected = None if complete_history else [row["run_id"] for row in cursor.execute("""
+                    SELECT r.run_id FROM mra.runtime_run r JOIN mra.runtime_schedule s USING(schedule_id)
+                    WHERE s.schedule_code ~ '^daily-(model|abstention)-[0-9a-f]{32}$'
+                    AND r.runtime_mode='SHADOW' AND s.runtime_mode='SHADOW'
+                    ORDER BY r.requested_at DESC,r.run_id DESC LIMIT 128""").fetchall()]
                 runs = cursor.execute("""
                     SELECT r.*,s.schedule_code,a.content_sha256,a.size_bytes
                     FROM mra.runtime_run r JOIN mra.runtime_schedule s USING(schedule_id)
                     LEFT JOIN mra.artifact a ON a.artifact_id=r.config_artifact_id
                     WHERE s.schedule_code ~ '^daily-(model|outcome|abstention)-[0-9a-f]{32}$'
                       AND r.runtime_mode='SHADOW' AND s.runtime_mode='SHADOW'
+                    AND (%s::uuid[] IS NULL OR r.run_id=ANY(%s::uuid[]) OR r.parent_run_id=ANY(%s::uuid[]))
                     ORDER BY r.requested_at,r.run_id
-                """ + ("" if complete_history else " LIMIT 513")).fetchall()
-                if not complete_history and len(runs)>512:
-                    raise ValueError("daily health ledger exceeds explicit row budget")
+                """, (selected, selected, selected)).fetchall()
                 steps = cursor.execute("SELECT * FROM mra.runtime_step WHERE run_id=ANY(%s::uuid[]) ORDER BY run_id,ordinal", ([r['run_id'] for r in runs],)).fetchall()
                 attempts = cursor.execute("SELECT * FROM mra.runtime_attempt WHERE step_id=ANY(%s::uuid[]) ORDER BY step_id,attempt_no", ([s['step_id'] for s in steps],)).fetchall()
                 sessions = cursor.execute("""SELECT session_id,session_date,open_at,close_at FROM mra.trading_session
@@ -235,12 +280,14 @@ class PostgresDailyPredictionReads:
             except (OSError, ValueError, ArtifactByteStoreError, ArtifactIntegrityError):
                 run['plan_error'] = 'FROZEN_PLAN_BYTES_UNREADABLE'
         return {**now, 'runs': runs,'steps': steps,'attempts': attempts,'sessions': sessions,
-                'freshness': freshness,'artifact_verification': artifact}
+                'freshness': freshness,'artifact_verification': artifact,
+                'complete_runtime_counts': counts, 'history_truncated': sum(row['count'] for row in counts) > len(runs)}
 
     def operational_health(self, plan: DailyPredictionPlan, *, template: DailyPredictionPlan | None = None) -> dict[str, Any]:
         """Bounded facts for publication, backlog, calendar, model, and freshness."""
 
         work = self.outcome_work_items(limit=256)
+        work_counts = self.outcome_work_counts()
         target_ids: dict[UUID, UUID] = {}
         template = template or plan
         use_work: dict[UUID, list[dict[str, Any]]] = {
@@ -419,6 +466,10 @@ class PostgresDailyPredictionReads:
             "last_successful_publication_at": publication[0],
             "last_successful_report_at": report[0],
             "outcome_backlog": {
+                "complete_runtime_counts": work_counts,
+                "complete_unfinished_count": sum(work_counts.get(state, 0) for state in ("QUEUED", "RUNNING", "WAITING", "FAILED")),
+                "next_cursor": work[-1].cursor if len(work) == 256 else None,
+                "detail_scope": "FIRST_PAGE; USE DAILY BACKLOG CURSOR FOR REMAINING WORK",
                 "observed_count": len(work),
                 "pending_maturity_count": pending_maturity,
                 "pending_settlement_count": pending_settlement,
@@ -473,7 +524,9 @@ class PostgresDailyPredictionReads:
                 "active_count": int(delivery[1]),
                 "reconciliation_required_count": int(delivery[2]),
                 "failed_count": int(delivery[3]),
-                "delivered_count": int(delivery[4]),
+                "completed_runtime_count": int(delivery[4]),
+                "remote_acceptance": "REQUIRES_VERSIONED_ATTEMPT_RECONCILIATION",
+                "final_delivery": "UNKNOWN",
             },
             "runtime": {
                 "active_count": int(runtime[0]),
@@ -652,13 +705,28 @@ class PostgresDailyPredictionReads:
                 code_sha=row[4], config_sha256=row[5], plan_content=content))
         return tuple(result)
 
+    def outcome_work_counts(self) -> dict[str, int]:
+        """Complete denominator, including broken bindings and all terminal states."""
+        with self._pool.connection(read_only=True) as connection:
+            rows = connection.execute("""SELECT run.state, count(*)
+                FROM mra.runtime_run run JOIN mra.runtime_schedule schedule USING(schedule_id)
+                WHERE schedule.schedule_code ~ '^daily-outcome-[0-9a-f]{32}$'
+                  AND schedule.runtime_mode='SHADOW' AND run.runtime_mode='SHADOW'
+                GROUP BY run.state""").fetchall()
+        return {state: int(count) for state, count in rows}
+
     def outcome_work_items(
-        self, *, limit: int = 64
+        self, *, limit: int = 64, after: DailyOutcomeCursor | None = None,
     ) -> tuple[DailyOutcomeWorkItem, ...]:
         """Discover historical settlement work independently of the current use."""
 
         if type(limit) is not int or not 1 <= limit <= 256:
             raise ValueError("daily Outcome scan limit must be between 1 and 256")
+        if after is not None:
+            from market_regime_alpha.shared.time import require_utc
+            if len(after) != 3 or type(after[0]) is not int or after[0] not in range(4) or not isinstance(after[2], UUID):
+                raise ValueError("invalid daily Outcome cursor")
+            require_utc(after[1], field="Outcome cursor requested_at")
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
@@ -694,15 +762,9 @@ class PostgresDailyPredictionReads:
                   AND schedule.runtime_mode = 'SHADOW'
                   AND run.runtime_mode = 'SHADOW'
                   AND run.state IN ('QUEUED', 'RUNNING', 'WAITING', 'FAILED')
-                  AND EXISTS (
-                    SELECT 1 FROM mra.runtime_step AS step
-                    WHERE step.run_id = run.run_id
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1 FROM mra.runtime_step AS step
-                    WHERE step.run_id = run.run_id
-                      AND step.implementation NOT LIKE 'research.daily_outcome.%%'
-                  )
+                  AND (%s::integer IS NULL OR
+                    (CASE run.state WHEN 'RUNNING' THEN 0 WHEN 'QUEUED' THEN 1 WHEN 'WAITING' THEN 2 ELSE 3 END,
+                     run.requested_at, run.run_id) > (%s::integer, %s::timestamptz, %s::uuid))
                 ORDER BY
                   CASE run.state
                     WHEN 'RUNNING' THEN 0
@@ -714,7 +776,7 @@ class PostgresDailyPredictionReads:
                   run.run_id
                 LIMIT %s
                 """,
-                (limit,),
+                (None if after is None else after[0], *(after or (None, None, None)), limit),
             ).fetchall()
         result: list[DailyOutcomeWorkItem] = []
         for row in rows:
@@ -861,7 +923,11 @@ class PostgresDailyPredictionReads:
         return result
 
     def population_source_ready(self, plan: DailyPredictionPlan) -> bool:
-        """Readiness only; Selection still freezes and verifies every member independently."""
+        """Complete Selection evidence roster; a classification header alone is insufficient."""
+        from market_regime_alpha.infrastructure.postgres.queries.selection_market import PostgresSelectionMarketQueries
+        from market_regime_alpha.selection.domain import MarketEvidenceStatus, UniverseScopeSpecification
+        from market_regime_alpha.shared.identity import InstrumentId
+        from market_regime_alpha.shared.time import DecisionTime
         with self._pool.connection(read_only=True) as connection:
             row = connection.execute(
                 """SELECT EXISTS (SELECT 1 FROM mra.classification classification
@@ -877,7 +943,16 @@ class PostgresDailyPredictionReads:
                 (plan.classification_scheme,plan.classification_code,plan.decision_time,plan.decision_time,
                  plan.provider_product_id,plan.input_cutoff),
             ).fetchone()
-        return row == (True,)
+            if row != (True,):
+                return False
+            owner = PostgresSelectionMarketQueries(connection)
+            scope = UniverseScopeSpecification(plan.universe_scope.artifact_id, str(plan.universe_scope.content_sha256),
+                plan.universe_scope.size_bytes, plan.provider_product_id, plan.classification_scheme,
+                plan.classification_code, tuple(InstrumentId(identity) for identity in plan.instrument_ids))
+            evidence = [owner.membership_as_of(scope=scope,
+                instrument_id=InstrumentId(identity), decision_time=DecisionTime(plan.input_cutoff))
+                for identity in plan.instrument_ids]
+        return all(item.status in {MarketEvidenceStatus.AVAILABLE, MarketEvidenceStatus.GAP} for item in evidence)
 
     def model_use_available(self, plan: DailyPredictionPlan) -> bool:
         with self._pool.connection(read_only=True) as connection:

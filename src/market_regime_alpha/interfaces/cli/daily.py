@@ -31,16 +31,31 @@ def add_daily_parser(areas: Any) -> None:
     validity_daily.add_argument("--protocol-version", type=int, default=CURRENT_PROTOCOL_VERSION)
     validity_daily.add_argument("--target-session-from", type=date.fromisoformat)
     validity_daily.add_argument("--target-session-to", type=date.fromisoformat)
+    for budget in ("collection", "backup", "publication"):
+        validity_daily.add_argument("--" + budget + "-budget-seconds", type=float,
+            help="Measured operational scenario duration; omitted means NOT_ESTIMABLE")
     daily = commands.add_parser("daily")
     operations = daily.add_subparsers(dest="daily_command", required=True)
-    for command in ("data-ready", "freeze-plan", "predict", "collect-outcome", "settle", "status", "report", "replay"):
+    lineage = operations.add_parser("lineage")
+    lineage.add_argument("--model-version-id", type=UUID, required=True)
+    for command in ("data-ready", "freeze-plan", "predict", "collect-outcome", "settle", "status", "report", "replay", "deliver", "delivery-status", "refresh-calendar"):
         operation = operations.add_parser(command)
         operation.add_argument("--plan", required=True, type=Path)
         if command == "freeze-plan":
             operation.add_argument("--output", required=True, type=Path)
-        if command in {"predict", "collect-outcome", "settle"}:
+        if command in {"deliver", "delivery-status"}:
+            operation.add_argument("--channel", required=True)
+        if command in {"predict", "collect-outcome", "settle", "deliver", "refresh-calendar"}:
             operation.add_argument("--operation-config", required=True, type=Path)
+        if command in {"predict", "collect-outcome", "settle"}:
             operation.add_argument("--maximum-steps", type=int, default=9 if command == "predict" else 64)
+    backlog = operations.add_parser("backlog")
+    backlog.add_argument("--kind", choices=("outcome", "delivery"), default="outcome")
+    backlog.add_argument("--channel", default="feishu")
+    backlog.add_argument("--page-size", type=int, default=64)
+    backlog.add_argument("--after-requested-at", type=datetime.fromisoformat)
+    backlog.add_argument("--after-run-id", type=UUID)
+    backlog.add_argument("--after-priority", type=int, choices=range(4))
     revoke = operations.add_parser("revoke-model")
     revoke.add_argument("--experimental-model-use-id", type=UUID, required=True)
     revoke.add_argument("--operation-config", type=Path, required=True)
@@ -89,10 +104,22 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                 UUID(protocol["frozen_population_semantics"]["provider_product_id"]),
                 operational["observed_at"],
             ) if "frozen_population_semantics" in protocol else None
-            return validity_report(observations, protocol, app.daily_prediction_reads.validity_calendar(),
+            calendar = app.daily_prediction_reads.validity_calendar()
+            result = validity_report(observations, protocol, calendar,
                 target_session_from=arguments.target_session_from, target_session_to=arguments.target_session_to,
                 model_use=use, calendar_coverage_witness=witness, operational_observations=operational)
+            from market_regime_alpha.research_qualification.domain.operational_capacity import operational_capacity
+            from market_regime_alpha.interfaces.daily_service import _OUTCOME_GRACE
+            result["operational_reachability"] = operational_capacity(result["cohort_capacity"], calendar,
+                observed_at=operational["observed_at"], collection_seconds=arguments.collection_budget_seconds,
+                backup_seconds=arguments.backup_budget_seconds, publication_seconds=arguments.publication_budget_seconds,
+                outcome_grace_seconds=_OUTCOME_GRACE.total_seconds())
+            return result
     command = arguments.daily_command
+    if command == "lineage":
+        from market_regime_alpha.interfaces.model_lineage import model_lineage
+        with bootstrap_application(settings) as app:
+            return model_lineage(app, arguments.model_version_id)
     if command == "observations":
         from market_regime_alpha.interfaces.daily_observations import daily_observations
         with bootstrap_application(settings) as app:
@@ -147,7 +174,74 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                     "STOP_EXPERIMENTAL_MODEL_USE",
                 ),
             )
+    if command == "backlog":
+        from market_regime_alpha.research_qualification.ports.daily_prediction import DailyDeliveryWorkItem, DailyOutcomeWorkItem
+        page: tuple[DailyDeliveryWorkItem | DailyOutcomeWorkItem, ...]
+        if (arguments.after_requested_at is None) != (arguments.after_run_id is None):
+            raise ValueError("backlog cursor requires both requested-at and run-id")
+        pair = None if arguments.after_requested_at is None else (arguments.after_requested_at, arguments.after_run_id)
+        with bootstrap_application(settings) as app:
+            reads = app.daily_prediction_reads
+            if arguments.kind == "outcome":
+                if (pair is None) != (arguments.after_priority is None):
+                    raise ValueError("Outcome cursor requires its exact priority")
+                page = reads.outcome_work_items(limit=arguments.page_size, after=None if pair is None else (arguments.after_priority, *pair))
+                counts = reads.outcome_work_counts()
+            else:
+                if arguments.after_priority is not None:
+                    raise ValueError("delivery cursor has no priority")
+                page = reads.delivery_work_items(arguments.channel, limit=arguments.page_size, after=pair)
+                counts = reads.delivery_work_counts(arguments.channel)
+            from dataclasses import asdict
+            items = [{key: value for key, value in asdict(item).items() if key != "plan_content"} for item in page]
+            if arguments.kind == "delivery":
+                from market_regime_alpha.interfaces.daily_delivery import DailyReportDelivery
+                from market_regime_alpha.interfaces.daily_work import published_delivery_plan
+                delivery = DailyReportDelivery(app, reads, admission_scope=lambda _: nullcontext())
+                for item, value in zip(page, items):
+                    assert isinstance(item, DailyDeliveryWorkItem)
+                    try:
+                        value["delivery_observation"] = delivery.inspect(published_delivery_plan(item), arguments.channel)
+                    except (RuntimeError, ValueError) as exc:
+                        value["delivery_observation"] = {"state": "INTEGRITY_BLOCKED", "error_type": type(exc).__name__}
+            return {"kind": arguments.kind, "complete_runtime_counts": counts,
+                    "items": items,
+                    "next_cursor": page[-1].cursor if len(page) == arguments.page_size else None,
+                    "page_size": arguments.page_size, "business_writes": 0}
     plan = decode_daily_plan(arguments.plan.read_bytes())
+    if command == "deliver":
+        from market_regime_alpha.interfaces.daily_service import _deliver_report, prepare_pending_daily_recovery
+        from market_regime_alpha.interfaces.daily_delivery import LegacyNotifierDeliveryAdapter
+        from market_regime_alpha.notifications import build_notifiers
+        config = load_operation_config(arguments.operation_config)
+        require_installation(config)
+        notifiers, unavailable = build_notifiers(channels=arguments.channel)
+        if unavailable or len(notifiers) != 1:
+            raise ValueError("DAILY_DELIVERY_CHANNEL_UNAVAILABLE")
+        with operational_session(settings, config) as guard, bootstrap_application(settings) as app:
+            prepare_pending_daily_recovery(app, guard.session)
+            guard.verify_startup(app)
+            app.daily_prediction_reads.validate_configuration(plan)
+            return _deliver_report(app, plan, LegacyNotifierDeliveryAdapter(notifiers[0]),
+                                   worker_id=config.worker_id, before_action=guard.before_action)
+    if command == "refresh-calendar":
+        import importlib
+        from market_regime_alpha.interfaces.calendar_continuity import refresh_calendar
+        from market_regime_alpha.interfaces.daily_collection import PerCaptureBaoStockProvider
+        from market_regime_alpha.interfaces.daily_service import prepare_pending_daily_recovery
+        from market_regime_alpha.interfaces.prospective_operation_guard import quiet_provider_output
+        config = load_operation_config(arguments.operation_config)
+        require_installation(config)
+        with operational_session(settings, config) as guard, bootstrap_application(settings) as app:
+            prepare_pending_daily_recovery(app, guard.session)
+            guard.verify_startup(app)
+            app.daily_prediction_reads.validate_configuration(plan)
+            provider = PerCaptureBaoStockProvider(importlib.import_module("baostock"), timeout_seconds=config.provider_timeout_seconds,
+                maximum_rows=config.provider_maximum_rows, maximum_response_bytes=config.provider_maximum_response_bytes)
+            with quiet_provider_output():
+                return refresh_calendar(app, provider_product_id=plan.provider_product_id, code_sha=config.code_sha,
+                    provider=provider, worker_id=config.worker_id, before_action=guard.before_action,
+                    experimental_model_use_id=plan.experimental_model_use_id)
     if command in {"predict", "collect-outcome", "settle"}:
         config = load_operation_config(arguments.operation_config)
         require_installation(config)
@@ -169,10 +263,18 @@ def dispatch_daily(arguments: argparse.Namespace, settings: TargetSettings) -> o
                     return operations.settle_and_evaluate(plan, worker_id=config.worker_id, maximum_steps=arguments.maximum_steps)
     with bootstrap_application(settings) as app:
         reads = app.daily_prediction_reads
+        if command == "delivery-status":
+            from market_regime_alpha.interfaces.daily_delivery import DailyReportDelivery
+            return DailyReportDelivery(app, reads, admission_scope=lambda _: nullcontext()).inspect(plan, arguments.channel)
         if command in {"data-ready", "freeze-plan"}:
             ready = reads.observe(plan)
             if command == "data-ready":
-                return ready
+                from dataclasses import asdict
+                population_ready = reads.population_source_ready(plan)
+                return {**asdict(ready), "content_sha256": ready.content_sha256,
+                    "price_input_state": ready.state, "population_source_ready": population_ready,
+                    "state": ready.state if population_ready else "NOT_READY",
+                    "reason_code": None if population_ready else "POPULATION_DEPENDENCIES_INCOMPLETE"}
             frozen = replace(plan, input_content_sha256=ready.content_sha256)
             content = encode_daily_plan(frozen)
             # Immutable local request file: never overwrite another frozen plan.

@@ -27,8 +27,16 @@ def daily_observations(
     health = daily_health(app, complete_history=True)
     cycles = []
     unavailable = []
+    unattributed = []
     for row in health["ledger"]:
+        selectors = (("model_version_id", model_version_id), ("target_definition_id", target_definition_id),
+                     ("experimental_model_use_id", experimental_model_use_id), ("dataset_id", dataset_id))
+        if any(value is not None and row.get(key) is not None and row[key] != value for key, value in selectors):
+            continue
         if row["state"] == "INTEGRITY_BLOCKED":
+            if any(value is not None and row.get(key) is None for key, value in selectors):
+                unattributed.append({key: row.get(key) for key in ("run_id", "state", "reason_code")})
+                continue
             raise ArtifactIntegrityError("research observation refuses unreconciled daily lineage")
         if any(value is not None and row.get(key) != value for key, value in (
             ("target_session", target_session_date), ("model_version_id", model_version_id),
@@ -103,4 +111,5 @@ def daily_observations(
         "authority": "READ_ONLY_CANONICAL_OBSERVATION_PROJECTION",
         "observed_at": health["observed_at"], "cycles": cycles, "unavailable": unavailable,
         "business_writes": 0, "research_evidence": "DESCRIPTIVE / NOT_ALPHA_EVIDENCE",
+        "unattributed_integrity_blockers": unattributed, "scope_complete": not unattributed,
     }

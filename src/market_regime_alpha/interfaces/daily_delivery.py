@@ -31,7 +31,7 @@ from market_regime_alpha.runtime.domain import (
     StepSpec,
 )
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
-from market_regime_alpha.runtime.ports import RunTrace
+from market_regime_alpha.runtime.ports import AttemptClaim, RunTrace
 from market_regime_alpha.shared.hashing import canonical_json_sha256
 from market_regime_alpha.shared.time import require_utc
 
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 
 _CHANNEL = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
-_ATTEMPT_STATES = frozenset({"DELIVERED", "PROVEN_NOT_SENT", "UNKNOWN"})
+_ATTEMPT_STATES = frozenset({"ACCEPTED", "DELIVERED", "PROVEN_NOT_SENT", "UNKNOWN"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +48,8 @@ class DailyDeliveryAttempt:
     state: str
     reason_code: str
     remote_receipt_id: str | None = None
+    request_sha256: str | None = None
+    response_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.state not in _ATTEMPT_STATES:
@@ -56,10 +58,17 @@ class DailyDeliveryAttempt:
             raise ValueError("daily delivery reason code is invalid")
         if self.state == "DELIVERED" and not self.remote_receipt_id:
             raise ValueError("delivered result requires a remote receipt identity")
-        if self.state != "DELIVERED" and self.remote_receipt_id is not None:
+        if self.remote_receipt_id is not None and (not isinstance(self.remote_receipt_id, str) or not self.remote_receipt_id.strip()):
+            raise ValueError("remote receipt identity must be a non-empty string")
+        if self.state == "ACCEPTED" and (self.request_sha256 is None or self.response_sha256 is None):
+            raise ValueError("accepted result requires exact request and response digests")
+        if self.state not in {"ACCEPTED", "DELIVERED"} and self.remote_receipt_id is not None:
             raise ValueError(
                 "non-delivered result cannot claim a remote delivery receipt"
             )
+        for value in (self.request_sha256, self.response_sha256):
+            if value is not None and not re.fullmatch(r"[0-9a-f]{64}", value):
+                raise ValueError("daily delivery response/request digest is invalid")
 
 
 class DailyDeliveryAdapter(Protocol):
@@ -80,17 +89,21 @@ class LegacyNotifierDeliveryAdapter:
     def deliver(
         self, content: str, *, idempotency_key: str
     ) -> DailyDeliveryAttempt:
-        del idempotency_key
+        # A local key cannot make a webhook implement remote idempotency.
+        # It is retained by Runtime; ambiguous attempts are never resent.
         result = self._notifier.send_text(content)
-        if result.success:
+        if result.channel != self.channel:
+            return DailyDeliveryAttempt("UNKNOWN", "NOTIFIER_CHANNEL_MISMATCH")
+        if result.success and result.state == "ACCEPTED" and result.request_sha256 and result.response_sha256:
             return DailyDeliveryAttempt(
-                "DELIVERED",
-                "LEGACY_NOTIFIER_ACKNOWLEDGED",
-                canonical_json_sha256(
-                    {"channel": result.channel, "message": result.message}
-                ),
+                "ACCEPTED", "WEBHOOK_REMOTE_ACCEPTED",
+                request_sha256=result.request_sha256, response_sha256=result.response_sha256,
             )
-        return DailyDeliveryAttempt("UNKNOWN", "LEGACY_NOTIFIER_RESULT_UNKNOWN")
+        return DailyDeliveryAttempt(
+            "PROVEN_NOT_SENT" if not result.success and result.state == "PROVEN_NOT_SENT" else "UNKNOWN",
+            "DELIVERY_PROVEN_NOT_SENT" if not result.success and result.state == "PROVEN_NOT_SENT" else "LEGACY_NOTIFIER_RESULT_UNKNOWN",
+            request_sha256=result.request_sha256, response_sha256=result.response_sha256,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +225,33 @@ class DailyReportDelivery:
         self._before_action = before_action
         self._lease_duration = lease_duration
 
+    def inspect(self, plan: DailyPredictionPlan, channel: str) -> dict[str, object]:
+        """Read original response evidence without scheduling or retrying a POST."""
+        if not _CHANNEL.fullmatch(channel):
+            raise ValueError("daily delivery channel is invalid")
+        content = self._reads.run_plan_content(uuid5(plan.prediction_id, "report-delivery:" + channel))
+        deadline = self._reads.ready(plan).target_window_start
+        if content is None:
+            return {"state": "EXPIRED" if self._reads.now() >= deadline else "NOT_REQUESTED",
+                    "prediction_id": plan.prediction_id, "channel": channel, "expires_at": deadline,
+                    "remote_acceptance": "UNKNOWN", "final_delivery": "UNKNOWN", "delivery_attempted": False}
+        frozen = DailyDeliveryPlan.decode(content)
+        _json, markdown = render_daily_report(plan, self._reads.forecast_projection(plan))
+        report = self._reads.published_report(plan, "report-markdown", markdown)
+        if (frozen.prediction_id != plan.prediction_id or frozen.channel != channel or frozen.code_sha != plan.code_sha
+            or frozen.experimental_model_use_id != plan.experimental_model_use_id or frozen.model_version_id != plan.model_version_id
+            or frozen.report != report or frozen.content != content):
+            raise ArtifactIntegrityError("daily delivery inspection identity changed")
+        trace = self._app.runtime.inspect_run(frozen.run_id)
+        response = self._attempt_response(frozen, trace) if trace.steps[0].attempt_states else None
+        if trace.run_state == "SUCCEEDED" and (response is None or response["state"] not in {"ACCEPTED", "DELIVERED"}):
+            raise ArtifactIntegrityError("successful delivery has no accepted response")
+        state = str(response["state"]) if trace.run_state == "SUCCEEDED" and response is not None else (
+            "DELIVERY_UNKNOWN_EXPIRED" if trace.run_state == "WAITING" and self._reads.now() >= min(deadline, frozen.expires_at)
+            else "DELIVERY_UNKNOWN" if trace.run_state == "WAITING" else trace.run_state)
+        return {**self._status(frozen, state, response=response),
+                "expires_at": min(deadline, frozen.expires_at), "original_plan_expires_at": frozen.expires_at}
+
     def deliver(
         self,
         plan: DailyPredictionPlan,
@@ -238,26 +278,34 @@ class DailyReportDelivery:
             plan, "report-markdown", markdown
         )
         now = self._reads.now()
-        desired = DailyDeliveryPlan(
+        deadline = self._reads.ready(plan).target_window_start
+        run_id = uuid5(plan.prediction_id, "report-delivery:" + adapter.channel)
+        existing = self._reads.run_plan_content(run_id)
+        if existing is None and now >= deadline:
+            return {"state": "EXPIRED", "prediction_id": plan.prediction_id,
+                    "report_artifact_id": report.artifact_id, "channel": adapter.channel,
+                    "expires_at": deadline, "delivery_attempted": False,
+                    "prediction_and_settlement_blocked": False}
+        frozen = DailyDeliveryPlan.decode(existing) if existing is not None else DailyDeliveryPlan(
             prediction_id=plan.prediction_id,
             experimental_model_use_id=plan.experimental_model_use_id,
             model_version_id=plan.model_version_id,
             channel=adapter.channel,
             report=report,
             requested_at=now,
-            expires_at=expires_at or now + timedelta(hours=24),
+            expires_at=min(expires_at, deadline) if expires_at is not None else deadline,
             code_sha=plan.code_sha,
         )
-        existing = self._reads.run_plan_content(desired.run_id)
-        frozen = desired if existing is None else DailyDeliveryPlan.decode(existing)
+        # Old v1 requests keep their bytes. Their formerly rolling 24h expiry
+        # never authorizes sending after the frozen Target begins.
         if (
-            frozen.prediction_id != desired.prediction_id
+            frozen.prediction_id != plan.prediction_id
             or frozen.experimental_model_use_id
-            != desired.experimental_model_use_id
-            or frozen.model_version_id != desired.model_version_id
-            or frozen.channel != desired.channel
-            or frozen.report != desired.report
-            or frozen.code_sha != desired.code_sha
+            != plan.experimental_model_use_id
+            or frozen.model_version_id != plan.model_version_id
+            or frozen.channel != adapter.channel
+            or frozen.report != report
+            or frozen.code_sha != plan.code_sha
         ):
             raise ArtifactIntegrityError("daily delivery frozen identity changed")
         with self._admission_scope(frozen):
@@ -267,6 +315,7 @@ class DailyReportDelivery:
                 adapter,
                 worker_id=worker_id,
                 maximum_attempts=maximum_attempts,
+                business_expires_at=deadline,
             )
 
     def _deliver_frozen(
@@ -277,7 +326,9 @@ class DailyReportDelivery:
         *,
         worker_id: str,
         maximum_attempts: int,
+        business_expires_at: datetime,
     ) -> dict[str, object]:
+        self._before_action()
         self._register(frozen)
         self._app.runtime.recover_expired(
             actor_id=worker_id,
@@ -288,14 +339,17 @@ class DailyReportDelivery:
         while attempts_started < maximum_attempts:
             trace = self._app.runtime.inspect_run(frozen.run_id)
             if trace.run_state == "SUCCEEDED":
-                return self._status(frozen, "DELIVERED")
+                response = self._attempt_response(frozen, trace)
+                if response is None or response["state"] not in {"ACCEPTED", "DELIVERED"}:
+                    raise ArtifactIntegrityError("successful delivery Runtime has no accepted response")
+                return self._status(frozen, str(response["state"]), response=response)
             if trace.run_state == "WAITING":
                 response = self._attempt_response(frozen, trace)
                 if (
                     response is not None
                     and response["state"] == "PROVEN_NOT_SENT"
                 ):
-                    if self._reads.now() >= frozen.expires_at:
+                    if self._reads.now() >= min(frozen.expires_at, business_expires_at):
                         self._app.runtime.resume_waiting_step(
                             run_id=frozen.run_id,
                             step_id=trace.steps[0].step_id,
@@ -326,9 +380,9 @@ class DailyReportDelivery:
                     continue
                 state = (
                     "DELIVERY_RECEIPT_RECONCILIATION_REQUIRED"
-                    if response is not None and response["state"] == "DELIVERED"
+                    if response is not None and response["state"] in {"ACCEPTED", "DELIVERED"}
                     else "DELIVERY_UNKNOWN_EXPIRED"
-                    if self._reads.now() >= frozen.expires_at
+                    if self._reads.now() >= min(frozen.expires_at, business_expires_at)
                     else "DELIVERY_UNKNOWN"
                 )
                 return self._status(frozen, state, response=response)
@@ -337,6 +391,8 @@ class DailyReportDelivery:
                     frozen,
                     "EXPIRED" if self._reads.now() >= frozen.expires_at else "FAILED",
                 )
+            if self._reads.now() >= min(frozen.expires_at, business_expires_at):
+                return self._status(frozen, "EXPIRED")
             self._before_action()
             claim = self._app.runtime.claim_next(
                 run_id=frozen.run_id,
@@ -355,31 +411,33 @@ class DailyReportDelivery:
                 claim, self._context(frozen, "start:" + str(claim.attempt_id))
             )
             self._before_action()
-            try:
-                result = adapter.deliver(
-                    markdown.decode("utf-8"),
-                    idempotency_key="daily-delivery:" + str(frozen.run_id),
-                )
-            except Exception:
-                result = DailyDeliveryAttempt(
-                    "UNKNOWN", "DELIVERY_ADAPTER_EXCEPTION"
-                )
+            if self._reads.now() >= min(frozen.expires_at, business_expires_at):
+                result = DailyDeliveryAttempt("PROVEN_NOT_SENT", "DELIVERY_EXPIRED_BEFORE_SEND")
+            else:
+                try:
+                    result = adapter.deliver(
+                        markdown.decode("utf-8"),
+                        idempotency_key="daily-delivery:" + str(frozen.run_id),
+                    )
+                except Exception:
+                    result = DailyDeliveryAttempt(
+                        "UNKNOWN", "DELIVERY_ADAPTER_EXCEPTION"
+                    )
             # The remote effect is outside all database transactions. Recheck
             # supervisor authority before recording its local result.
             self._before_action()
             response_artifact, response_value = self._publish_response(
-                frozen, claim.attempt_no, result
+                frozen, claim.attempt_no, result, attempt_id=claim.attempt_id,
+                runtime_claim=claim if result.state in {"ACCEPTED", "DELIVERED"} else None,
             )
-            if result.state == "DELIVERED":
-                self._app.runtime.succeed_attempt(
-                    claim,
-                    result_hash=str(response_artifact.content_sha256),
-                    context=self._context(frozen, "delivered:" + str(claim.attempt_no)),
-                )
+            if result.state in {"ACCEPTED", "DELIVERED"}:
+                # Response Artifact, receipt, audit and completion share the
+                # original Runtime UoW; a lost commit is rediscovered exactly.
                 return self._status(
                     frozen,
-                    "DELIVERED",
+                    result.state,
                     response=response_value,
+                    attempted_this_call=True,
                 )
             self._app.runtime.fail_attempt(
                 claim,
@@ -388,7 +446,7 @@ class DailyReportDelivery:
                 context=self._context(frozen, "failed:" + str(claim.attempt_no)),
             )
             if result.state != "PROVEN_NOT_SENT":
-                return self._status(frozen, "DELIVERY_UNKNOWN")
+                return self._status(frozen, "DELIVERY_UNKNOWN", response=response_value, attempted_this_call=True)
         trace = self._app.runtime.inspect_run(frozen.run_id)
         response = self._attempt_response(frozen, trace)
         state = (
@@ -396,7 +454,7 @@ class DailyReportDelivery:
             if response is not None and response["state"] == "PROVEN_NOT_SENT"
             else "DELIVERY_UNKNOWN"
         )
-        return self._status(frozen, state, response=response)
+        return self._status(frozen, state, response=response, attempted_this_call=attempts_started > 0)
 
     def _register(self, plan: DailyDeliveryPlan) -> None:
         config = self._app.artifacts.publish(
@@ -474,9 +532,12 @@ class DailyReportDelivery:
         plan: DailyDeliveryPlan,
         attempt_no: int,
         result: DailyDeliveryAttempt,
+        *,
+        attempt_id: UUID,
+        runtime_claim: AttemptClaim | None = None,
     ) -> tuple[ArtifactBinding, dict[str, object]]:
         value: dict[str, object] = {
-            "schema": "daily-report-delivery-attempt-v1",
+            "schema": "daily-report-delivery-attempt-v2",
             "prediction_id": str(plan.prediction_id),
             "delivery_run_id": str(plan.run_id),
             "channel": plan.channel,
@@ -485,12 +546,20 @@ class DailyReportDelivery:
             "reason_code": result.reason_code,
             "remote_receipt_id": result.remote_receipt_id,
             "report_sha256": str(plan.report.content_sha256),
+            "report_artifact_id": str(plan.report.artifact_id),
+            "plan_sha256": plan.content_sha256,
+            "request_key": "daily-delivery:" + str(plan.run_id),
+            "request_sha256": result.request_sha256,
+            "response_sha256": result.response_sha256,
+            "attempt_id": str(attempt_id),
+            "recorded_at": self._reads.now().isoformat(),
         }
         content = (
             json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode()
         artifact = self._app.artifacts.publish(
             content,
+            runtime_claim=runtime_claim,
             media_type="application/json",
             context=CommandContext(
                 self._response_key(plan, attempt_no),
@@ -519,10 +588,13 @@ class DailyReportDelivery:
             return None
         _binding, content = stored
         value = json.loads(content)
+        version2 = isinstance(value, dict) and value.get("schema") == "daily-report-delivery-attempt-v2"
+        extra_fields = {"report_artifact_id", "plan_sha256", "request_key", "request_sha256",
+                        "response_sha256", "attempt_id", "recorded_at"} if version2 else set()
         if (
             not isinstance(value, dict)
             or set(value)
-            != {
+            != extra_fields | {
                 "schema",
                 "prediction_id",
                 "delivery_run_id",
@@ -534,7 +606,7 @@ class DailyReportDelivery:
                 "report_sha256",
             }
             or
-            value.get("schema") != "daily-report-delivery-attempt-v1"
+            value.get("schema") not in {"daily-report-delivery-attempt-v1", "daily-report-delivery-attempt-v2"}
             or value.get("prediction_id") != str(plan.prediction_id)
             or value.get("delivery_run_id") != str(plan.run_id)
             or value.get("channel") != plan.channel
@@ -542,11 +614,21 @@ class DailyReportDelivery:
             or value.get("report_sha256") != str(plan.report.content_sha256)
         ):
             raise ArtifactIntegrityError("daily delivery response identity changed")
+        if version2 and (value["report_artifact_id"] != str(plan.report.artifact_id)
+                        or value["plan_sha256"] != plan.content_sha256
+                        or value["request_key"] != "daily-delivery:" + str(plan.run_id)
+                        or value["attempt_id"] != str(self._reads.delivery_attempt_id(plan.run_id, attempt_no))):
+            raise ArtifactIntegrityError("daily delivery response request/attempt changed")
         try:
+            if version2:
+                recorded = require_utc(datetime.fromisoformat(value["recorded_at"]), field="delivery response time")
+                if recorded < plan.requested_at or recorded > self._reads.now():
+                    raise ValueError("response clock differs")
             DailyDeliveryAttempt(
                 state=value["state"],
                 reason_code=value["reason_code"],
                 remote_receipt_id=value["remote_receipt_id"],
+                request_sha256=value.get("request_sha256"), response_sha256=value.get("response_sha256"),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ArtifactIntegrityError(
@@ -560,11 +642,15 @@ class DailyReportDelivery:
         state: str,
         *,
         response: dict[str, object] | None = None,
+        attempted_this_call: bool = False,
     ) -> dict[str, object]:
         trace = self._app.runtime.inspect_run(plan.run_id)
         attempt_count = len(trace.steps[0].attempt_states)
+        legacy_claim = response is not None and response.get("schema") == "daily-report-delivery-attempt-v1" and response.get("reason_code") == "LEGACY_NOTIFIER_ACKNOWLEDGED"
         return {
-            "state": state,
+            "state": "LEGACY_DELIVERY_CLAIM_UNVERIFIED" if legacy_claim else state,
+            "remote_acceptance": "ACCEPTED" if not legacy_claim and response is not None and response.get("state") in {"ACCEPTED", "DELIVERED"} else "UNKNOWN",
+            "final_delivery": "DELIVERED" if not legacy_claim and response is not None and response.get("state") == "DELIVERED" else "UNKNOWN",
             "prediction_id": plan.prediction_id,
             "model_version_id": plan.model_version_id,
             "channel": plan.channel,
@@ -575,6 +661,7 @@ class DailyReportDelivery:
             "expires_at": plan.expires_at,
             "response": response,
             "delivery_attempted": attempt_count > 0,
+            "attempted_this_call": attempted_this_call,
             "prediction_and_settlement_blocked": False,
         }
 

@@ -10,7 +10,7 @@ live configuration changes require their own explicit scope.
 
 ## Active: continuous research reliability
 
-WP-CONTINUOUS-RESEARCH-RELIABILITY-01 starts from main
+The continuous research reliability package starts from main
 `76c19a60f5106dd184a20fdaf46d786629a9cd99`. Development and disposable verification
 are authorized. Original database writes, service changes, installation activation,
 external messages and trading require separate session authorization.
@@ -29,10 +29,10 @@ these dependency-coherent checkpoints, with the following risk-directed gates:
 | Recovery substitutes current configuration or repeats completed work | Daily original-plan recovery, owner reports and CLI | Crash after publication/partial Outcome/completed Evaluation, expired/revoked Use, old installation identity, zero-write replay |
 | Backup copy mistaken for restore; broken Model lineage hidden | Existing evidence/backup/restore and model queries/CLI | Fresh PostgreSQL restore, schema/owner roster/Artifact hashes and report replay; corruption refusal; exact Model chain |
 
-- [ ] Confirm current call chains and reproduce gaps before corrections.
-- [ ] Implement numerical and delivery contracts with compatibility checks.
-- [ ] Wire bounded discovery, fairness, health isolation and operational commands.
-- [ ] Verify calendar/capacity, frozen recovery, backup/restore and Model lineage.
+- [x] Confirm current call chains and reproduce gaps before corrections.
+- [x] Implement numerical and delivery contracts with compatibility checks.
+- [x] Wire bounded discovery, fairness, health isolation and operational commands.
+- [x] Verify calendar/capacity, frozen recovery, backup/restore and Model lineage.
 - [ ] Run affected PostgreSQL/runtime regressions, static/docs/inventory checks,
   build and independent wheel CLI smoke; retain initial failures and reruns.
 - [ ] Record implementation and final revisions plus five separate gates:
@@ -221,7 +221,8 @@ or financial formula change is in scope.
   handling. Never infer open days from weekdays. Preserve old pending plans.
 - [x] Prove v2 capacity failure from actual Provider calendar and exact Use
   lifetime: 12 eligible sessions / at most 384 observations against 20/500.
-- [ ] Register an explicitly authorized successor
+- [x] Subsequently completed by the ModelUse rollover recorded in Current State:
+  register an explicitly authorized successor
   experimental use through its owner, with the same Model/Feature/Target/baseline,
   a future valid_from and a bounded lifetime. Only after actual calendar capacity
   is known, freeze v3 with unchanged 20-session/500-observation floors and explicit

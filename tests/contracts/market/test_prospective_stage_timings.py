@@ -32,12 +32,12 @@ def stage_cli(tmp_path, monkeypatch):
             raise psycopg.errors.QueryCanceled("do not expose postgresql://principal:PRIVATE_PASSWORD@host/db")
         return result
     guard = SimpleNamespace(verify_startup=lambda _: action("guard_preflight", {"ready": True}),
-                            snapshot=lambda: action("tick_scope"), validate_scope=lambda _: action("composition_scope"),
+                            operation_scope=lambda: action("tick_scope"), validate_scope=lambda _: action("composition_scope"),
                             before_action=lambda: action("before_action"), backup_snapshot_at=None, backup_verified_at=None,
                             session=SimpleNamespace(allow_expired_daily_recovery=lambda *_: None))
     health = {"database": {"name": "disposable", "oid": 1}, "observed_at": "database-clock",
               "summary": {"alerts": (), "operational_state": "NOT_DUE"}, "scopes": {"ALL_HISTORY": {"state": "AVAILABLE"}}}
-    application = SimpleNamespace(evidence=SimpleNamespace(inventory=lambda: {}),
+    application = SimpleNamespace(evidence=SimpleNamespace(operation_scope=lambda: {}),
         prospective_health=SimpleNamespace(inspect=lambda *_args, **_kwargs: action("prospective_health", health)),
         daily_prediction_reads=SimpleNamespace(validate_configuration=lambda _: action("daily_preparation")))
     @contextmanager
@@ -65,7 +65,7 @@ def stage_cli(tmp_path, monkeypatch):
     monkeypatch.setattr("market_regime_alpha.interfaces.daily_service.daily_tick", daily)
     monkeypatch.setattr("market_regime_alpha.notifications.build_notifiers", lambda **_: ([], []))
     monkeypatch.setattr("market_regime_alpha.interfaces.daily_health.daily_health", lambda *_args, **_kwargs: action("daily_health", {"ledger": []}))
-    def invoke(*, preflight=False):
+    def invoke(*, preflight=False, maximum_wakeups=1):
         common = ["--operation-config", "isolated-profile.json", "--daily-plan-template", str(path),
                   "--expected-database-name", configuration.database_name]
         if preflight:
@@ -73,12 +73,20 @@ def stage_cli(tmp_path, monkeypatch):
         else:
             arguments = ["archive", "prospective", "serve", *common, "--series-code", configuration.series_code,
                          "--code-sha", configuration.code_sha, "--actor-id", "operator", "--worker-id", "worker",
-                         "--wakeup-seconds", "0.001", "--maximum-wakeups", "1"]
+                         "--wakeup-seconds", "0.001", "--maximum-wakeups", str(maximum_wakeups)]
         output, error = StringIO(), StringIO()
         result = module.main(arguments, environ={"MRA_DATABASE_URL": "postgresql://localhost/disposable", "MRA_ARTIFACT_ROOT": str(tmp_path)},
                              stdout=output, stderr=error)
         return result, [json.loads(line) for line in output.getvalue().splitlines()], error.getvalue()
     return control, calls, invoke, configuration
+
+
+def test_daily_and_prospective_alternate_first_access_to_the_same_tick_budget(stage_cli):
+    _control, calls, invoke, _configuration = stage_cli
+    status, _rows, error = invoke(maximum_wakeups=4)
+    assert status == 0 and error == ""
+    owners = [call for call in calls if call in {"daily_research", "prospective_continuation"}]
+    assert owners == ["daily_research", "prospective_continuation", "prospective_continuation", "daily_research"] * 2
 
 
 def test_successful_daily_tick_reports_disjoint_parent_stages_and_inclusive_guard(stage_cli):
@@ -96,7 +104,8 @@ def test_successful_daily_tick_reports_disjoint_parent_stages_and_inclusive_guar
     assert stages["before_action_guard"]["add_to_other_stage_totals"] is False
     assert stages["daily_research"]["add_to_other_stage_totals"] is True
     assert stages["before_action_guard"]["elapsed_seconds"] <= stages["prospective_continuation"]["elapsed_seconds"] + stages["daily_research"]["elapsed_seconds"]
-    assert calls.index("prospective_continuation") < calls.index("daily_research") < calls.index("prospective_health") < calls.index("daily_health")
+    # The current prediction receives its reserved steps before archive backlog.
+    assert calls.index("daily_research") < calls.index("prospective_continuation") < calls.index("prospective_health") < calls.index("daily_health")
     assert all(stage["failed_count"] == 0 and stage["elapsed_seconds"] >= 0 for stage in stages.values())
 
 
@@ -111,8 +120,6 @@ def test_successful_daily_tick_reports_disjoint_parent_stages_and_inclusive_guar
     ("tick_bootstrap", "TICK", "bootstrap_scope"),
     ("prospective_continuation", "TICK", "prospective_continuation"),
     ("daily_research", "TICK", "daily_research"),
-    ("prospective_health", "TICK", "prospective_health"),
-    ("daily_health", "TICK", "daily_health"),
 ))
 def test_query_cancellation_emits_exact_failure_stage_without_retry_or_secret(stage_cli, failure, phase, stage):
     control, calls, invoke, configuration = stage_cli
@@ -139,12 +146,34 @@ def test_nested_guard_failure_is_marked_child_and_keeps_parent_elapsed(stage_cli
     status, rows, _error = invoke()
     assert status == 2
     failures = [row for row in rows if row.get("event") == "PROSPECTIVE_STAGE_FAILURE"]
-    assert [row["stage"] for row in failures] == ["before_action_guard", "prospective_continuation"]
+    assert [row["stage"] for row in failures] == ["before_action_guard", "daily_research"]
     assert failures[0]["inclusive_child"] is True
     assert failures[1]["inclusive_child"] is False
     assert failures[0]["stage_elapsed_seconds"] <= failures[1]["stage_elapsed_seconds"]
     assert calls.count("before_action") == 1
-    assert "daily_research" not in calls
+    assert "prospective_continuation" not in calls
+
+
+@pytest.mark.parametrize("failure", ["prospective_health", "daily_health"])
+def test_read_only_health_cancellation_preserves_both_owner_results(stage_cli, failure):
+    control, calls, invoke, _ = stage_cli
+    control["fail"] = failure
+    status, rows, error = invoke()
+    assert status == 0 and not error
+    failures = [row for row in rows if row.get("event") == "PROSPECTIVE_STAGE_FAILURE"]
+    assert len(failures) == 1
+    assert failures[0]["stage"] == failure
+    assert failures[0]["error_type"] == "QueryCanceled"
+    tick = next(row for row in rows if row.get("event") == "PROSPECTIVE_TICK")
+    assert tick["daily_research"]["state"] == "FROZEN_OWNER_WORK_UNCHANGED"
+    assert tick["continuation"]["state"] == "NO_DUE_WORK"
+    observed = tick["health" if failure == "prospective_health" else "daily_health"]
+    assert observed["state"] == "HEALTH_QUERY_FAILED"
+    assert observed["sqlstate"] == "57014"
+    assert calls.count(failure) == 1
+    assert "PRIVATE_PASSWORD" not in json.dumps(rows)
+    if failure == "prospective_health":
+        assert tick["alert_changes"] == []  # No false resolution from a failed observation.
 
 
 def test_preflight_output_times_its_actual_health_without_starting_tick(stage_cli):

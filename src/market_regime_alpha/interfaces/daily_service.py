@@ -11,6 +11,7 @@ from uuid import UUID, uuid5
 from market_regime_alpha.infrastructure.postgres.prospective_operation_session import daily_research_admission
 from market_regime_alpha.interfaces.daily_collection import DailyCollectionPlan, collect_daily
 from market_regime_alpha.interfaces.calendar_continuity import refresh_calendar
+from market_regime_alpha.interfaces.operation_observation import ActionGuard, observe_health
 from market_regime_alpha.interfaces.daily_research import DailyResearchOperations, decode_daily_plan, encode_daily_plan
 from market_regime_alpha.research_qualification.domain.daily_prediction import DailyPredictionPlan
 from market_regime_alpha.research_qualification.domain.daily_inputs import DailyInputState
@@ -38,16 +39,24 @@ _OUTCOME_GRACE = timedelta(hours=8)
 
 def prepare_pending_daily_recovery(app: TargetApplication, session: Any) -> None:
     """Startup revalidates pending plans across Model uses before checking leases."""
-    for item in app.daily_prediction_reads.outcome_work_items(limit=64):
-        if item.run_state in {"FAILED", "WAITING"}:
-            continue
-        plan = _historical_outcome_plan(item)
-        app.daily_prediction_reads.validate_configuration(plan)
-        app.daily_prediction_reads.ready(plan)
-        session.allow_frozen_daily_recovery(
-            prediction_id=plan.prediction_id, code_sha=plan.code_sha,
-            config_sha256=sha256(encode_daily_plan(plan)).hexdigest(),
-        )
+    after = None
+    while True:
+        page = app.daily_prediction_reads.outcome_work_items(limit=64, after=after)
+        for item in page:
+            if item.run_state in {"FAILED", "WAITING"}:
+                continue
+            plan = _historical_outcome_plan(item)
+            app.daily_prediction_reads.validate_configuration(plan)
+            app.daily_prediction_reads.ready(plan)
+            session.allow_frozen_daily_recovery(
+                prediction_id=plan.prediction_id, code_sha=plan.code_sha,
+                config_sha256=sha256(encode_daily_plan(plan)).hexdigest(),
+            )
+        if len(page) < 64:
+            break
+        after = page[-1].cursor
+    from market_regime_alpha.interfaces.daily_work import prepare_delivery_recovery
+    prepare_delivery_recovery(app, session)
 
 
 def current_daily_plan(app: TargetApplication, template: DailyPredictionPlan) -> DailyPredictionPlan:
@@ -164,8 +173,16 @@ def daily_tick(
     maximum_steps: int,
     before_action: Callable[[], None],
     delivery_adapter: DailyDeliveryAdapter | None = None,
+    work_cursor: Any = None,
+    _phase: str = "all",
 ) -> dict[str, Any]:
     """No sleeping, dates inferred by neither process nor supervisor; DB clock/calendar decide."""
+    if work_cursor is not None and _phase == "all":
+        from market_regime_alpha.interfaces.daily_work import advance_daily_work
+        return advance_daily_work(app, template, provider, worker_id=worker_id, maximum_steps=maximum_steps,
+            before_action=before_action, delivery_adapter=delivery_adapter, cursor=work_cursor)
+    guard = ActionGuard(before_action)
+    before_action = guard
     before_action()
     reads = app.daily_prediction_reads
     selected_plan = template
@@ -191,13 +208,9 @@ def daily_tick(
                 "prediction_and_settlement_blocked": False,
             },
         )
-        try:
-            payload["health"] = reads.operational_health(selected_plan, template=template)
-        except (AttributeError, RuntimeError, ValueError) as exc:
-            payload["health"] = {
-                "state": "HEALTH_QUERY_FAILED",
-                "reason_code": type(exc).__name__,
-            }
+        guard.raise_if_failed()
+        if _phase == "all":
+            payload["health"] = observe_health(lambda: reads.operational_health(selected_plan, template=template))
         return payload
 
     completed: list[dict[str, Any]] = []
@@ -220,7 +233,9 @@ def daily_tick(
 
     # Durable pending work was declared at prediction publication. Inspect future
     # items across every historical ModelUse, then claim at most one task per tick.
-    for item in reads.outcome_work_items(limit=64):
+    page = () if _phase in {"prediction", "missed"} else reads.outcome_work_items(
+        limit=64, after=None if work_cursor is None else work_cursor.outcome_after)
+    for item in page:
         status: dict[str, Any] = {
             "run_id": item.run_id,
             "run_state": item.run_state,
@@ -250,6 +265,7 @@ def daily_tick(
             RuntimeStateConflictError,
             ValueError,
         ) as exc:
+            guard.raise_if_failed()
             completed.append(
                 {
                     **status,
@@ -278,6 +294,7 @@ def daily_tick(
             try:
                 members = reads.target_price_members(plan)
             except (RuntimeError, ValueError) as exc:
+                guard.raise_if_failed()
                 completed.append(
                     {
                         **status,
@@ -299,6 +316,7 @@ def daily_tick(
                             before_action,
                         )
                     except (RuntimeError, ValueError) as exc:
+                        guard.raise_if_failed()
                         completed.append(
                             {
                                 **status,
@@ -313,6 +331,9 @@ def daily_tick(
                     if result["state"] == "COLLECTION_PROGRESS":
                         outcome_action = completed[-1]
                         selected_plan = plan
+                        if work_cursor is not None:
+                            work_cursor.outcome_after = item.cursor
+                            break
                 else:
                     completed.append({**status, "state": "OUTCOME_DATA_PENDING"})
                 continue
@@ -341,6 +362,7 @@ def daily_tick(
                     plan, worker_id=worker_id, maximum_steps=maximum_steps
                 )
         except (RuntimeError, ValueError) as exc:
+            guard.raise_if_failed()
             completed.append(
                 {
                     **status,
@@ -352,8 +374,15 @@ def daily_tick(
         outcome_action = {**status, "state": "SETTLEMENT_PROGRESS", "result": settlement}
         selected_plan = plan
         completed.append(outcome_action)
+        if work_cursor is not None:
+            work_cursor.outcome_after = item.cursor
+            break
     if outcome_action is not None:
         return finish({"state": "OUTCOME_PROGRESS", "outcomes": completed})
+    if _phase == "outcome":
+        if work_cursor is not None:
+            work_cursor.outcome_after = page[-1].cursor if len(page) == 64 else None
+        return finish({"state": "OUTCOME_IDLE", "outcomes": completed})
     try:
         reads.validate_configuration(template)
     except (
@@ -362,6 +391,7 @@ def daily_tick(
         RuntimeStateConflictError,
         ValueError,
     ) as exc:
+        guard.raise_if_failed()
         return finish(
             {
                 "state": "PREDICTION_CONFIGURATION_BLOCKED",
@@ -374,7 +404,7 @@ def daily_tick(
         experimental_model_use_id=template.experimental_model_use_id)
     if calendar["state"] == "BLOCKED" or calendar.get("coverage", {}).get("state") != "VERIFIED":
         return finish({"state": "CALENDAR_CONTINUITY_BLOCKED", "reason_code": calendar["reason_code"], "pending": completed})
-    elapsed = reads.missing_elapsed_session_pairs(template)
+    elapsed = reads.missing_elapsed_session_pairs(template) if _phase != "prediction" else ()
     if elapsed:
         input_session, target_session = elapsed[0]
         now = reads.now()
@@ -387,6 +417,8 @@ def daily_tick(
             missed,
             "PROCESS_DOWNTIME_MISSED_PUBLICATION",
         )
+    if _phase == "missed":
+        return finish({"state": "NO_ELAPSED_PUBLICATION_GAPS"})
     try:
         plan = current_daily_plan(app, template)
         selected_plan = plan
@@ -485,7 +517,7 @@ def daily_tick(
                 plan,
                 "NO_FEATURE_READY_MEMBERS",
             )
-    if existing is not None and trace.run_state == "SUCCEEDED" and plan.experimental_model_use_id != template.experimental_model_use_id:
+    if existing is not None and trace.run_state == "SUCCEEDED":
         # Published work retains its original Use and bytes; rollover only reads it.
         execution = trace
     else:
@@ -497,8 +529,11 @@ def daily_tick(
             )
     projection_state = "PREDICTION_PROGRESS"
     if execution.run_state == "SUCCEEDED":
-        projection = reads.forecast_projection(plan)
+        projection = observe_health(lambda: reads.forecast_projection(plan))
         projection_state = (
+            "PREDICTION_COMMITTED_OBSERVATION_UNAVAILABLE"
+            if projection.get("state") == "HEALTH_QUERY_FAILED"
+            else
             "PREDICTION_PUBLISHED"
             if projection["denominators"]["model_prediction"] > 0
             else "PREDICTION_COMPLETED_ZERO"
@@ -514,7 +549,9 @@ def daily_tick(
         "result": execution,
         "pending": completed,
     }
-    if execution.run_state == "SUCCEEDED" and delivery_adapter is not None:
+    if execution.run_state == "SUCCEEDED":
+        payload["publication_observation"] = projection
+    if execution.run_state == "SUCCEEDED" and delivery_adapter is not None and _phase == "all":
         try:
             payload["delivery"] = _deliver_report(
                 app,
@@ -524,6 +561,7 @@ def daily_tick(
                 before_action=before_action,
             )
         except (RuntimeError, ValueError) as exc:
+            guard.raise_if_failed()
             payload["delivery"] = {
                 "state": "DELIVERY_FAILED",
                 "reason_code": str(exc),

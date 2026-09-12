@@ -247,6 +247,8 @@ class RuntimeRepository(Protocol):
 
     def start_attempt(self, claim: AttemptClaim) -> int: ...
 
+    def lock_live_claim(self, claim: AttemptClaim, *, expected_step_kind: str | None = None) -> None: ...
+
     def heartbeat_attempt(
         self,
         claim: AttemptClaim,

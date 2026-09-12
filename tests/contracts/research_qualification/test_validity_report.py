@@ -78,6 +78,15 @@ def test_protocol_immutable_resource_hash_and_future_boundary():
         validate_protocol_revision(revision, protocol)
 
 
+@pytest.mark.parametrize("damaged_scope", ["selected", "operational"])
+def test_unattributable_history_cannot_be_promoted_to_validity(damaged_scope):
+    observations, protocol, calendar = canonical_fixture()
+    operational = deepcopy(observations)
+    (observations if damaged_scope == "selected" else operational)["scope_complete"] = False
+    with pytest.raises(ArtifactIntegrityError, match="UNATTRIBUTED_HISTORY_REQUIRES_IDENTITY_RECOVERY"):
+        validity_report(observations, protocol, calendar, operational_observations=operational)
+
+
 def test_report_preserves_canonical_metrics_and_common_population():
     observations, protocol, calendar = canonical_fixture()
     before = deepcopy(observations)

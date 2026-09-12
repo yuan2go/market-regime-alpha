@@ -70,6 +70,25 @@ class PostgresEvidenceSnapshotPort:
             connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             return read_evidence_snapshot(connection)
 
+    def operation_scope(self) -> dict[str, Any]:
+        with self._pool.connection(read_only=True) as connection:
+            connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            return read_operation_scope(connection)
+
+
+def read_operation_scope(connection: psycopg.Connection[Any]) -> dict[str, Any]:
+    """Fresh per-tick identity/fence scope; physical rosters belong to startup/backup."""
+    with connection.cursor(row_factory=dict_row) as cursor:
+        database = cursor.execute("""SELECT current_database() AS name, oid::bigint AS oid,
+            (pg_control_system()).system_identifier::text AS cluster_identity
+            FROM pg_database WHERE datname=current_database()""").fetchone()
+        schema = cursor.execute("SELECT epoch_name AS epoch,baseline_checksum,catalog_checksum FROM mra.schema_epoch").fetchone()
+        generations = cursor.execute("SELECT DISTINCT series_code FROM mra.prospective_archive_generation").fetchall()
+        state = cursor.execute("""SELECT clock_timestamp() AS observed_at,
+            (SELECT count(*) FROM mra.runtime_attempt WHERE state IN ('CLAIMED','RUNNING')) AS active_attempts""").fetchone()
+    assert database is not None and schema is not None and state is not None
+    return {"database": database, "schema": schema, "prospective_generations": generations, **state}
+
 
 def read_service_restart_state(connection: psycopg.Connection[Any]) -> dict[str, Any]:
     """Inspect current fences/effects without recovering or reopening any Run."""

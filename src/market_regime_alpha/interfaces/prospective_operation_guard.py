@@ -75,6 +75,14 @@ class ProspectiveOperationGuard:
         self.validate_scope(snapshot)
         return snapshot
 
+    def operation_scope(self) -> dict[str, Any]:
+        from market_regime_alpha.infrastructure.postgres.queries.evidence import read_operation_scope
+        with self.connection.transaction():
+            self.connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            snapshot = read_operation_scope(self.connection)
+        self.validate_scope(snapshot)
+        return snapshot
+
     def before_action(self) -> None:
         self.session.require_supervisor_lock(self.config.series_code)
         self.verify_runtime_principal()

@@ -46,6 +46,8 @@ from market_regime_alpha.interfaces.archive import (
 )
 from market_regime_alpha.interfaces.backtest import load_backtest_specification
 from market_regime_alpha.interfaces.deployment_profile import prepare_deployment_profile, require_installation
+from market_regime_alpha.interfaces.operation_observation import observe_health
+from market_regime_alpha.interfaces.daily_work import DailyWorkCursor
 from market_regime_alpha.interfaces.prospective_service import OperationAlertChanges, OperationStopped, OperationStopRequest, serve_prospective
 from market_regime_alpha.interfaces.prospective_operations import load_operation_config, validate_operation_arguments
 from market_regime_alpha.interfaces.prospective_operation_guard import operational_session, quiet_provider_output, verify_provider_access
@@ -200,6 +202,7 @@ def main(
                 alerts = OperationAlertChanges()
                 stop_request = OperationStopRequest()
                 tick_sequence = 0
+                daily_work_cursor = DailyWorkCursor()
 
                 def tick() -> object:
                     nonlocal tick_sequence
@@ -218,17 +221,35 @@ def main(
                             guard.before_action()
                         check_stop()
                     with _operation_stage(tick_timings, "installation_scope_checks", phase="TICK", emit=emit, tick_sequence=tick_sequence):
-                        guard.snapshot()
+                        guard.operation_scope()
                     # Revalidate the new composition connection, not only the
                     # separate supervisor-lock connection, before owner writes.
                     with ExitStack() as tick_stack:
                         with _operation_stage(tick_timings, "bootstrap_scope", phase="TICK", emit=emit, tick_sequence=tick_sequence):
                             application = tick_stack.enter_context(bootstrap_application(settings))
                         with _operation_stage(tick_timings, "installation_scope_checks", phase="TICK", emit=emit, tick_sequence=tick_sequence):
-                            guard.validate_scope(application.evidence.inventory())
-                        try:
-                            with _operation_stage(tick_timings, "prospective_continuation", phase="TICK", emit=emit, tick_sequence=tick_sequence), quiet_provider_output():
-                                result = continue_prospective_series(
+                            guard.validate_scope(application.evidence.operation_scope())
+                        def advance_daily() -> object:
+                            if daily_template is None or stop_request.requested:
+                                return None
+                            from market_regime_alpha.interfaces.daily_service import daily_tick
+                            from market_regime_alpha.interfaces.daily_collection import PerCaptureBaoStockProvider
+                            try:
+                                with _operation_stage(tick_timings, "daily_research", phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                                    check_stop()
+                                    return daily_tick(application,daily_template,PerCaptureBaoStockProvider(sdk,
+                                        timeout_seconds=operation_config.provider_timeout_seconds,maximum_rows=operation_config.provider_maximum_rows,
+                                        maximum_response_bytes=operation_config.provider_maximum_response_bytes),worker_id=operation_config.worker_id,
+                                        maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action,
+                                        delivery_adapter=daily_delivery_adapter, work_cursor=daily_work_cursor)
+                            except OperationStopped as exc:
+                                return {'state':'OPERATOR_STOPPED','reason_code':exc.reason_code,
+                                    'completed_action_accounting': 'CANONICAL_HEALTH_ROSTER'}
+                        def advance_prospective() -> object:
+                            try:
+                                with _operation_stage(tick_timings, "prospective_continuation", phase="TICK", emit=emit, tick_sequence=tick_sequence), quiet_provider_output():
+                                    check_stop()
+                                    return continue_prospective_series(
                                     application, series_code=operation_config.series_code, sdk=sdk,
                                     code_sha=operation_config.code_sha, actor_id=operation_config.actor_id,
                                     worker_id=operation_config.worker_id,
@@ -239,58 +260,57 @@ def main(
                                     maximum_attempts=operation_config.maximum_attempts_per_tick,
                                     before_action=before_action,
                                 )
-                        except OperationStopped as exc:
-                            result = {"state": "OPERATOR_STOPPED", "reason_code": exc.reason_code,
-                                      "completed_action_accounting": "CANONICAL_HEALTH_ROSTER"}
-                        daily_result=None
-                        if daily_template is not None and not stop_request.requested:
-                            from market_regime_alpha.interfaces.daily_service import daily_tick
-                            from market_regime_alpha.interfaces.daily_collection import PerCaptureBaoStockProvider
-                            try:
-                                with _operation_stage(tick_timings, "daily_research", phase="TICK", emit=emit, tick_sequence=tick_sequence):
-                                    daily_result=daily_tick(application,daily_template,PerCaptureBaoStockProvider(sdk,
-                                        timeout_seconds=operation_config.provider_timeout_seconds,maximum_rows=operation_config.provider_maximum_rows,
-                                        maximum_response_bytes=operation_config.provider_maximum_response_bytes),worker_id=operation_config.worker_id,
-                                        maximum_steps=operation_config.maximum_attempts_per_tick,before_action=before_action,
-                                        delivery_adapter=daily_delivery_adapter)
                             except OperationStopped as exc:
-                                daily_result={'state':'OPERATOR_STOPPED','reason_code':exc.reason_code}
-                        with _operation_stage(tick_timings, "prospective_health", phase="TICK", emit=emit, tick_sequence=tick_sequence):
-                            health = application.prospective_health.inspect(operation_config.series_code,
-                                cutover_at=arguments.health_cutover_at)
+                                return {"state": "OPERATOR_STOPPED", "reason_code": exc.reason_code,
+                                        "completed_action_accounting": "CANONICAL_HEALTH_ROSTER"}
+                        # Alternate first access to the unchanged wall-clock budget.
+                        # A slow owner cannot permanently consume every wakeup.
+                        if tick_sequence % 2:
+                            daily_result, result = advance_daily(), advance_prospective()
+                        else:
+                            result, daily_result = advance_prospective(), advance_daily()
+                        def measured_health(name: str, read: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+                            def measured() -> dict[str, Any]:
+                                with _operation_stage(tick_timings, name, phase="TICK", emit=emit, tick_sequence=tick_sequence):
+                                    return read()
+                            return observe_health(measured)
+                        health = measured_health("prospective_health", lambda: application.prospective_health.inspect(
+                            operation_config.series_code, cutover_at=arguments.health_cutover_at))
                         daily_scoped_health = None
                         if daily_template is not None:
                             from market_regime_alpha.interfaces.daily_health import daily_health
-                            with _operation_stage(tick_timings, "daily_health", phase="TICK", emit=emit, tick_sequence=tick_sequence):
-                                daily_scoped_health = daily_health(application,cutover_at=arguments.health_cutover_at)
+                            daily_scoped_health = measured_health("daily_health", lambda: daily_health(
+                                application, cutover_at=arguments.health_cutover_at))
+                            if "ledger" in daily_scoped_health:
                                 daily_scoped_health['pending_work'] = [
                                     {key: row.get(key) for key in ('run_id','prediction_id','target_session','state','reason_code')}
                                     for row in daily_scoped_health.pop('ledger')
                                 ]
-                    summary = health["summary"]
+                    summary = health.get("summary", health)
+                    health_available = health.get("state") != "HEALTH_QUERY_FAILED"
                     alert_summary = (health['scopes']['POST_CURRENT_CUTOVER']['summary']
-                                     if arguments.health_cutover_at is not None else summary)
+                                     if health_available and arguments.health_cutover_at is not None else summary)
                     return {
-                        "event": "PROSPECTIVE_TICK", "database": health["database"],
+                        "event": "PROSPECTIVE_TICK", "database": health.get("database"),
                         "tick_sequence": tick_sequence, "stage_timings": tick_timings,
                         "stage_timing_contract": "WALL_CLOCK; BEFORE_ACTION_GUARD_IS_INCLUSIVE_CHILD_DO_NOT_SUM_WITH_PARENT_STAGES",
-                        "series_code": operation_config.series_code, "observed_at": health["observed_at"],
+                        "series_code": operation_config.series_code, "observed_at": health.get("observed_at"),
                         "configuration_sha256": operation_config.content_sha256,
                         "continuation": result,
                         "daily_research": daily_result,
                         "health": {key: value for key, value in summary.items() if key != "alerts"},
-                        "health_scopes": health['scopes'],
+                        "health_scopes": health.get("scopes", {"state": "UNKNOWN"}),
                         "daily_health": daily_scoped_health,
                         "backup_observation": {
                             "snapshot_at": guard.backup_snapshot_at,
                             "verified_at": guard.backup_verified_at,
-                            "age_seconds": (None if guard.backup_snapshot_at is None else
+                            "age_seconds": (None if guard.backup_snapshot_at is None or not health_available else
                                 (health['observed_at'] - guard.backup_snapshot_at).total_seconds()),
                             "receipt_sha256": operation_config.backup_receipt_sha256,
                             "state": 'VERIFIED_AT_PREFLIGHT_AND_ENFORCED_BEFORE_ACTION',
                         },
                         "alert_scope": 'POST_CURRENT_CUTOVER' if arguments.health_cutover_at is not None else 'ALL_HISTORY',
-                        "alert_changes": alerts.observe(alert_summary["alerts"]),
+                        "alert_changes": alerts.observe(alert_summary["alerts"]) if health_available else (),
                         "tick_elapsed_seconds": perf_counter() - started,
                     }
 
@@ -386,6 +406,15 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 operator_id=arguments.operator_id,
             )
     if arguments.area == "evidence":
+        if arguments.evidence_command == "fresh-restore":
+            if not arguments.disposable:
+                raise ValueError("RESTORE_REQUIRES_EXPLICIT_DISPOSABLE_TARGET")
+            from market_regime_alpha.infrastructure.postgres.evidence_backup import PostgresEvidenceBackup
+            PostgresEvidenceBackup(settings.database_url, settings.artifact_root).fresh_restore(
+                arguments.bundle, expected_name=arguments.expected_database_name, expected_oid=arguments.expected_database_oid,
+                expected_cluster_identity=arguments.expected_cluster_identity, expected_backup_sha256=arguments.expected_backup_sha256)
+            with bootstrap_application(settings) as restored:
+                return restored.evidence.restore_check(arguments.bundle)
         if arguments.evidence_command == "diagnose":
             return inspect_operational_database(
                 settings, run_id=arguments.run_id, expected_database_name=arguments.expected_database_name,
@@ -569,6 +598,13 @@ def _parser() -> argparse.ArgumentParser:
         backup.add_argument("--minimum-free-bytes", type=int, default=256_000_000)
     restore = evidence_commands.add_parser("restore-check")
     restore.add_argument("--bundle", type=Path, required=True)
+    fresh = evidence_commands.add_parser("fresh-restore")
+    fresh.add_argument("--bundle", type=Path, required=True)
+    fresh.add_argument("--disposable", action="store_true")
+    fresh.add_argument("--expected-database-name", required=True)
+    fresh.add_argument("--expected-database-oid", required=True, type=int)
+    fresh.add_argument("--expected-cluster-identity", required=True)
+    fresh.add_argument("--expected-backup-sha256", required=True)
 
     database = areas.add_parser("db")
     database_commands = database.add_subparsers(dest="db_command", required=True)
