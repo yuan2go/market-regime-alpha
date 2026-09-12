@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_EVEN
+from decimal import Decimal, DecimalException, ROUND_HALF_EVEN
 import json
 from typing import Any
 from uuid import UUID
@@ -31,6 +31,7 @@ class DeterministicRidgeArtifact:
     coefficients: tuple[Decimal, ...]
     alpha: Decimal
     seed: int
+    format_version: int = 1
 
 
 def fit_deterministic_ridge(
@@ -39,6 +40,7 @@ def fit_deterministic_ridge(
     feature_definition_ids: tuple[UUID, ...],
     alpha: Decimal,
     seed: int,
+    format_version: int = 2,
 ) -> DeterministicRidgeArtifact:
     """Fit a fixed ridge formulation and emit canonical content-addressed bytes."""
 
@@ -48,10 +50,12 @@ def fit_deterministic_ridge(
         feature_definition_ids
     ):
         raise ValueError("feature_definition_ids must be non-empty and unique")
-    if alpha < 0 or not alpha.is_finite():
+    if not alpha.is_finite() or alpha < 0:
         raise ValueError("alpha must be finite and non-negative")
-    if isinstance(seed, bool) or seed < 0:
+    if type(seed) is not int or seed < 0:
         raise ValueError("seed must be non-negative")
+    if type(format_version) is not int or format_version not in {1, 2}:
+        raise ValueError("unsupported ridge artifact format version")
     ordered = tuple(sorted(rows, key=lambda item: str(item.model_training_sample_id)))
     if len({item.model_training_sample_id for item in ordered}) != len(ordered):
         raise ValueError("training sample identities must be unique")
@@ -66,25 +70,37 @@ def fit_deterministic_ridge(
         raise ValueError("training matrix values must be finite")
 
     matrix = np.asarray(
-        [[float(value) for value in item.features] for item in ordered],
+        [[_binary64(value) for value in item.features] for item in ordered],
         dtype=np.float64,
     )
-    target = np.asarray([float(item.target) for item in ordered], dtype=np.float64)
-    means = matrix.mean(axis=0, dtype=np.float64)
-    scales = matrix.std(axis=0, dtype=np.float64)
-    scales = np.where(scales == 0.0, 1.0, scales)
-    normalized = (matrix - means) / scales
-    design = np.column_stack((np.ones(len(ordered), dtype=np.float64), normalized))
-    penalty = np.eye(width + 1, dtype=np.float64) * float(alpha)
-    penalty[0, 0] = 0.0
-    parameters = np.linalg.solve(design.T @ design + penalty, design.T @ target)
+    target = np.asarray([_binary64(item.target) for item in ordered], dtype=np.float64)
+    try:
+        with np.errstate(over="raise", invalid="raise", divide="raise"):
+            means = matrix.mean(axis=0, dtype=np.float64)
+            if format_version == 1:
+                # Historical fitting/bytes remain available for exact replay.
+                scales = matrix.std(axis=0, dtype=np.float64)
+            else:
+                centered = matrix - means
+                magnitude = np.max(np.abs(centered), axis=0)
+                divisor = np.where(magnitude == 0.0, 1.0, magnitude)
+                scales = divisor * np.sqrt(np.mean((centered / divisor) ** 2, axis=0))
+            scales = np.where(scales == 0.0, 1.0, scales)
+            normalized = (matrix - means) / scales
+            design = np.column_stack((np.ones(len(ordered), dtype=np.float64), normalized))
+            penalty = np.eye(width + 1, dtype=np.float64) * _binary64(alpha)
+            penalty[0, 0] = 0.0
+            parameters = np.linalg.solve(design.T @ design + penalty, design.T @ target)
+    except (FloatingPointError, np.linalg.LinAlgError) as exc:
+        raise ValueError("ridge fit has no finite, solvable binary64 system") from exc
     if not np.isfinite(parameters).all():
         raise ValueError("deterministic ridge produced non-finite parameters")
 
-    decimal_means = tuple(_decimal(value) for value in means)
-    decimal_scales = tuple(_decimal(value) for value in scales)
-    intercept = _decimal(parameters[0])
-    coefficients = tuple(_decimal(value) for value in parameters[1:])
+    encode = _decimal if format_version == 1 else _exact_decimal
+    decimal_means = tuple(encode(value) for value in means)
+    decimal_scales = tuple(encode(value) for value in scales)
+    intercept = encode(parameters[0])
+    coefficients = tuple(encode(value) for value in parameters[1:])
     sample_roster_sha256 = canonical_json_sha256(
         tuple(
             {
@@ -96,7 +112,7 @@ def fit_deterministic_ridge(
         )
     )
     payload = {
-        "algorithm": "deterministic_ridge_v1",
+        "algorithm": f"deterministic_ridge_v{format_version}",
         "alpha": format(alpha, "f"),
         "coefficients": [format(item, "f") for item in coefficients],
         "feature_definition_ids": [str(item) for item in feature_definition_ids],
@@ -104,7 +120,7 @@ def fit_deterministic_ridge(
         "feature_scales": [format(item, "f") for item in decimal_scales],
         "intercept": format(intercept, "f"),
         "sample_roster_sha256": sample_roster_sha256,
-        "schema": "mra-deterministic-ridge-model-v1",
+        "schema": f"mra-deterministic-ridge-model-v{format_version}",
         "seed": seed,
     }
     content = json.dumps(
@@ -114,7 +130,7 @@ def fit_deterministic_ridge(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return DeterministicRidgeArtifact(
+    artifact = DeterministicRidgeArtifact(
         content=content,
         content_sha256=sha256_bytes(content),
         sample_roster_sha256=sample_roster_sha256,
@@ -125,7 +141,14 @@ def fit_deterministic_ridge(
         coefficients=coefficients,
         alpha=alpha,
         seed=seed,
+        format_version=format_version,
     )
+    restored = load_deterministic_ridge_artifact(content)
+    if restored != artifact:
+        raise ValueError("ridge Artifact round trip differs from fitted parameters")
+    for item in ordered:
+        predict_deterministic_ridge(restored, item.features)
+    return restored
 
 
 def predict_deterministic_ridge(
@@ -136,6 +159,21 @@ def predict_deterministic_ridge(
         raise ValueError("inference feature width does not match ModelVersion")
     if any(not item.is_finite() for item in features):
         raise ValueError("inference features must be finite")
+    if model.format_version == 2:
+        # V2 preserves round-trippable binary64 parameters and uses the same
+        # arithmetic/transform as fit. V1 keeps its original Decimal inference.
+        try:
+            with np.errstate(over="raise", invalid="raise", divide="raise"):
+                raw_values = np.asarray([_binary64(item) for item in features])
+                normalized = (raw_values - np.asarray([_binary64(item) for item in model.feature_means])) / np.asarray(
+                    [_binary64(item) for item in model.feature_scales])
+                result = np.dot(np.r_[1.0, normalized], np.asarray(
+                    [_binary64(model.intercept), *(_binary64(item) for item in model.coefficients)]))
+                if not np.isfinite(result):
+                    raise ValueError("ridge inference must be finite")
+                return _decimal(result)
+        except (FloatingPointError, DecimalException) as exc:
+            raise ValueError("ridge inference exceeds finite output precision") from exc
     value = model.intercept
     for raw, mean, scale, coefficient in zip(
         features,
@@ -179,9 +217,11 @@ def load_deterministic_ridge_artifact(
     }
     if set(payload) != expected:
         raise ValueError("fitted ModelVersion Artifact must contain exact fields")
-    if payload["schema"] != "mra-deterministic-ridge-model-v1":
+    versions = {f"mra-deterministic-ridge-model-v{version}": version for version in (1, 2)}
+    if not isinstance(payload["schema"], str) or payload["schema"] not in versions:
         raise ValueError("fitted ModelVersion Artifact schema is unsupported")
-    if payload["algorithm"] != "deterministic_ridge_v1":
+    format_version = versions[payload["schema"]]
+    if payload["algorithm"] != f"deterministic_ridge_v{format_version}":
         raise ValueError("fitted ModelVersion Artifact algorithm is unsupported")
     feature_ids = _uuid_array(payload["feature_definition_ids"])
     means = _decimal_array(payload["feature_means"], "feature_means")
@@ -199,6 +239,9 @@ def load_deterministic_ridge_artifact(
     intercept = _decimal_scalar(payload["intercept"], "intercept")
     if alpha < 0:
         raise ValueError("fitted ModelVersion alpha must be non-negative")
+    if format_version == 2:
+        for number in (*means, *scales, *coefficients, intercept, alpha):
+            _binary64(number)
     seed = payload["seed"]
     if not isinstance(seed, Decimal) or seed != seed.to_integral_value() or seed < 0:
         raise ValueError("fitted ModelVersion seed must be a non-negative integer")
@@ -218,6 +261,7 @@ def load_deterministic_ridge_artifact(
         coefficients=coefficients,
         alpha=alpha,
         seed=int(seed),
+        format_version=format_version,
     )
 
 
@@ -227,6 +271,17 @@ def _decimal(value: np.float64) -> Decimal:
         rounding=ROUND_HALF_EVEN,
     )
     return Decimal(0).quantize(_QUANTUM) if result == 0 else result
+
+
+def _exact_decimal(value: np.float64) -> Decimal:
+    return Decimal(format(float(value), ".17g"))
+
+
+def _binary64(value: Decimal) -> float:
+    result = float(value)
+    if not np.isfinite(result) or (value != 0 and result == 0):
+        raise ValueError("value is outside finite non-underflowing binary64 range")
+    return result
 
 
 def _closed_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

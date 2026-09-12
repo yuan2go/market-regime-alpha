@@ -4,6 +4,7 @@ from decimal import Decimal
 from uuid import UUID
 
 import pytest
+import json
 
 from market_regime_alpha.research_qualification.application.deterministic_linear import (
     fit_deterministic_ridge,
@@ -92,3 +93,55 @@ def test_prediction_reuses_fit_scaling_without_learning_from_unseen_rows() -> No
     assert predict_deterministic_ridge(fitted, (Decimal(5),)) == Decimal(7)
     assert predict_deterministic_ridge(fitted, (Decimal(-1),)) == Decimal(1)
     assert fitted.content == original
+
+
+@pytest.mark.parametrize("scale", ["1", "1e-14", "1e-150", "1e-300"])
+def test_v2_tiny_scale_round_trip_uses_the_training_transform(scale: str) -> None:
+    unit = Decimal(scale)
+    fitted = fit_deterministic_ridge(
+        tuple(LinearTrainingRow(UUID(int=i), (unit * i,), Decimal(2 * i)) for i in (1, 3)),
+        feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18,
+    )
+    restored = load_deterministic_ridge_artifact(fitted.content)
+    assert json.loads(fitted.content)["schema"] == "mra-deterministic-ridge-model-v2"
+    assert restored == fitted
+    assert fitted.feature_scales[0] > 0
+    # x=(u,3u), z=(-1,1), y=(2,6), alpha=2: intercept=4, beta=1.
+    assert predict_deterministic_ridge(restored, (5 * unit,)) == Decimal(7)
+    assert predict_deterministic_ridge(fitted, (-unit,)) == Decimal(1)
+
+
+def test_constant_feature_has_explicit_unit_scale() -> None:
+    fitted = fit_deterministic_ridge(
+        tuple(LinearTrainingRow(UUID(int=i), (Decimal("1e-30"),), Decimal(i)) for i in (1, 3)),
+        feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18,
+    )
+    assert fitted.feature_scales == (Decimal(1),)
+    assert predict_deterministic_ridge(load_deterministic_ridge_artifact(fitted.content), (Decimal(99),)) == Decimal(2)
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "1e400", "1e-400"])
+def test_training_rejects_values_outside_finite_binary64(value: str) -> None:
+    with pytest.raises(ValueError, match="finite|binary64"):
+        fit_deterministic_ridge(
+            tuple(LinearTrainingRow(UUID(int=i), (Decimal(value),), Decimal(i)) for i in (1, 3)),
+            feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18,
+        )
+
+
+def test_v1_bytes_and_prediction_remain_unchanged() -> None:
+    content = b'{"algorithm":"deterministic_ridge_v1","alpha":"2","coefficients":["1.000000000000"],"feature_definition_ids":["00000000-0000-0000-0000-00000000000a"],"feature_means":["2.000000000000"],"feature_scales":["1.000000000000"],"intercept":"4.000000000000","sample_roster_sha256":"0e51b24a61f8e6ff17b4bbc41870418edd6933bb790f0fd7c83e5afb24452eb6","schema":"mra-deterministic-ridge-model-v1","seed":18}'
+    fitted = fit_deterministic_ridge(
+        tuple(LinearTrainingRow(UUID(int=i), (Decimal(i),), Decimal(2 * i)) for i in (1, 3)),
+        feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18, format_version=1,
+    )
+    assert fitted.content == content
+    assert predict_deterministic_ridge(load_deterministic_ridge_artifact(content), (Decimal(5),)) == Decimal(7)
+
+
+def test_v1_refuses_to_publish_an_unloadable_fit() -> None:
+    with pytest.raises(ValueError, match="scales must be positive"):
+        fit_deterministic_ridge(
+            tuple(LinearTrainingRow(UUID(int=i), (Decimal(i) * Decimal("1e-14"),), Decimal(i)) for i in (1, 3)),
+            feature_definition_ids=(UUID(int=10),), alpha=Decimal(2), seed=18, format_version=1,
+        )
