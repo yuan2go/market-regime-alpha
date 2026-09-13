@@ -448,11 +448,36 @@ class PostgresResearchSourceQueries:
         ).fetchone()
         if scope is None or simulated_event_cutoff >= knowledge_cutoff:
             raise RuntimeStateConflictError("Exploratory Dataset archive dual-clock scope is invalid")
-        observations = self.market_source_observations(sources, lock=lock)
+        # Shared Calendar rows retain the first Capture's immutable identity.
+        # Exploratory integrity must come from this sealed Archive's binding.
+        calendar_sources = tuple(s for s in sources if s.role is DatasetSourceRole.MARKET_TRADING_SESSION)
+        observations = self.market_source_observations(
+            tuple(s for s in sources if s.role is not DatasetSourceRole.MARKET_TRADING_SESSION), lock=lock,
+        )
+        calendar_by_id = {s.market_trading_session_id: s for s in calendar_sources}
+        if len(calendar_by_id) != len(calendar_sources) or None in calendar_by_id:
+            raise RuntimeStateConflictError("Exploratory Calendar source identities must be exact and unique")
+        calendar_rows = self._connection.execute("""
+            SELECT session.session_id, binding.decision_visible_at, binding.foundation_integrity,
+                   session.decision_reference_at
+            FROM mra.trading_session session
+            CROSS JOIN LATERAL mra.exploratory_archive_calendar_capture(session.session_id,%s,%s) binding
+            WHERE session.session_id=ANY(%s::uuid[])
+            """ + (" FOR SHARE OF session" if lock else ""),
+            (market_archive_id,knowledge_cutoff,list(calendar_by_id)),
+        ).fetchall() if calendar_sources else []
+        if len(calendar_rows) != len(calendar_sources):
+            raise RuntimeStateConflictError("Exploratory Calendar lacks exact Archive normalization before the knowledge cutoff")
+        calendar_observations = tuple(DatasetMarketSourceObservation(
+            dataset_source_id=calendar_by_id[UUID(str(row[0]))].dataset_source_id,
+            role=DatasetSourceRole.MARKET_TRADING_SESSION, source_identity=UUID(str(row[0])),
+            instrument_id=None, decision_visible_at=row[1], foundation_integrity=row[2] is True,
+            event_cutoff_at=row[3],
+        ) for row in calendar_rows)
         source_by_role_and_identity = {
             (item.role, item.source_identity): item for item in observations
         }
-        enriched: list[DatasetMarketSourceObservation] = []
+        enriched: list[DatasetMarketSourceObservation] = list(calendar_observations)
         from market_regime_alpha.infrastructure.postgres.queries.historical_failures import read_historical_failures
         gap_identities = tuple(item.source_identity for item in observations if item.role is DatasetSourceRole.MARKET_SOURCE_GAP)
         request_failures = read_historical_failures(self._connection, market_archive_id, knowledge_cutoff, simulated_event_cutoff, gap_identities) if gap_identities else {}
@@ -476,12 +501,6 @@ class PostgresResearchSourceQueries:
                 "capture_id",
                 "source.event_start",
             ),
-            DatasetSourceRole.MARKET_TRADING_SESSION: (
-                "trading_session",
-                "session_id",
-                "source_capture_id",
-                "source.decision_reference_at",
-            ),
             DatasetSourceRole.MARKET_SOURCE_GAP: (
                 "source_gap",
                 "gap_id",
@@ -504,17 +523,6 @@ class PostgresResearchSourceQueries:
                              AND observation.capture_id = source.{capture_column}
                              AND observation.known_at <= %s
                        ) OR (
-                           %s = 'MARKET_TRADING_SESSION'
-                           AND EXISTS (
-                               SELECT 1
-                               FROM mra.market_capture_trading_session_normalization AS normalization
-                               JOIN mra.market_archive_capture_observation AS observation
-                                 ON observation.capture_id = normalization.capture_id
-                                AND observation.market_archive_id = %s
-                                AND observation.known_at <= %s
-                               WHERE normalization.session_id = source.{identity_column}
-                           )
-                       ) OR (
                            %s = 'MARKET_SOURCE_GAP'
                            AND EXISTS (
                                SELECT 1
@@ -527,9 +535,6 @@ class PostgresResearchSourceQueries:
                 WHERE source.{identity_column} = ANY(%s::uuid[])
                 """,  # noqa: S608 -- every identifier comes from the closed mapping above
                 (
-                    market_archive_id,
-                    knowledge_cutoff,
-                    role.value,
                     market_archive_id,
                     knowledge_cutoff,
                     role.value,
@@ -559,7 +564,7 @@ class PostgresResearchSourceQueries:
                     )
                 )
         if {item.dataset_source_id for item in enriched} != {
-            item.dataset_source_id for item in observations
+            item.dataset_source_id for item in (*observations, *calendar_observations)
         }:
             raise RuntimeNotFoundError("Exploratory Dataset archive source roster is incomplete")
         return tuple(sorted(enriched, key=lambda item: str(item.dataset_source_id)))

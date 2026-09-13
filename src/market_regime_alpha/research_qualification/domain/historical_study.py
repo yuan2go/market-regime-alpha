@@ -5,6 +5,7 @@ from datetime import date
 import json
 import re
 from uuid import UUID
+from typing import ClassVar, Self
 
 
 BASELINE_CANDIDATES = ("rule", "zero", "training_mean", "feature", "inverse_feature", "ridge_v1", "ridge_v2")
@@ -12,6 +13,7 @@ BASELINE_CANDIDATES = ("rule", "zero", "training_mean", "feature", "inverse_feat
 
 @dataclass(frozen=True, slots=True)
 class HistoricalStudyPlan:
+    allowed_candidates: ClassVar[tuple[str, ...]] = BASELINE_CANDIDATES
     study_code: str
     template_backtest_id: UUID
     template_definition_sha256: str
@@ -45,7 +47,7 @@ class HistoricalStudyPlan:
             raise ValueError("next-session labels require explicit maturity purge and embargo sessions")
         if not self.instrument_ids or len(self.instrument_ids) > 500 or self.instrument_ids != tuple(sorted(set(self.instrument_ids), key=str)):
             raise ValueError("study requires 1–500 unique sorted instruments")
-        if not self.candidates or len(set(self.candidates)) != len(self.candidates) or any(x not in BASELINE_CANDIDATES for x in self.candidates):
+        if not self.candidates or len(set(self.candidates)) != len(self.candidates) or any(x not in self.allowed_candidates for x in self.candidates):
             raise ValueError("unsupported or duplicate baseline candidate")
         if type(self.seed) is not int or self.seed < 0:
             raise ValueError("study seed must be a non-negative integer")
@@ -53,7 +55,7 @@ class HistoricalStudyPlan:
             raise ValueError("this fixed-roster study cannot claim historical membership or PIT")
 
     @classmethod
-    def from_bytes(cls, content: bytes) -> "HistoricalStudyPlan":
+    def from_bytes(cls, content: bytes) -> Self:
         def closed(pairs):
             result = {}
             for key, value in pairs:

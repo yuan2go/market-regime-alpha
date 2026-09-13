@@ -22,6 +22,7 @@ from market_regime_alpha.shared.time import DecisionTime, require_utc
 
 class BacktestFeatureLineageKind(StrEnum):
     BAR_REVISION = "BAR_REVISION"
+    INSTRUMENT_FACT = "INSTRUMENT_FACT"
     SOURCE_GAP = "SOURCE_GAP"
     TRADING_SESSION = "TRADING_SESSION"
 
@@ -57,7 +58,7 @@ class BacktestDatasetFeatureCell:
         if available != (self.value is not None):
             raise ValueError("only AVAILABLE Feature cells carry a value")
         if available != (
-            self.lineage_kind is BacktestFeatureLineageKind.BAR_REVISION
+            self.lineage_kind in {BacktestFeatureLineageKind.BAR_REVISION, BacktestFeatureLineageKind.INSTRUMENT_FACT}
         ):
             raise ValueError("Feature state and typed lineage are incompatible")
         if self.value is not None and not self.value.is_finite():
@@ -185,6 +186,7 @@ def materialize_backtest_dataset(
             lineage_ids = set()
             fields = {
                 BacktestFeatureLineageKind.BAR_REVISION: ("MARKET_BAR_REVISION", "market_bar_revision_id"),
+                BacktestFeatureLineageKind.INSTRUMENT_FACT: ("MARKET_INSTRUMENT_FACT_REVISION", "market_instrument_fact_revision_id"),
                 BacktestFeatureLineageKind.SOURCE_GAP: ("MARKET_SOURCE_GAP", "market_source_gap_id"),
                 BacktestFeatureLineageKind.TRADING_SESSION: ("MARKET_TRADING_SESSION", "market_trading_session_id"),
             }

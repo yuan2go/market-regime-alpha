@@ -55,13 +55,24 @@ class _ActionDraft:
 class BacktestExecutionPlanner:
     """Rebuild expected work from frozen facts; owns no mutable cursor."""
 
+    def __init__(self) -> None:
+        self._compiled_run: FrozenBacktestRun | None = None
+        self._compiled_actions: tuple[BacktestExpectedAction, ...] = ()
+
     def compile(
         self,
         run: FrozenBacktestRun,
         observations: Iterable[BacktestActionObservation] = (),
     ) -> BacktestExecutionPlan:
-        drafts = self._draft_actions(run)
-        ordered = _topological_actions(drafts)
+        actions = self._expected_actions(run)
+        return self._reconcile(run, actions, observations)
+
+    def _expected_actions(self, run: FrozenBacktestRun) -> tuple[BacktestExpectedAction, ...]:
+        # One immutable root, not an observed-state or authorization cache.
+        # A fresh/replaced root rebuilds the graph; every observation stays live.
+        if self._compiled_run is run:
+            return self._compiled_actions
+        ordered = _topological_actions(self._draft_actions(run))
         actions = tuple(
             BacktestExpectedAction(
                 action_id=draft.action_id,
@@ -77,6 +88,11 @@ class BacktestExecutionPlanner:
             )
             for ordinal, draft in enumerate(ordered, start=1)
         )
+        self._compiled_run, self._compiled_actions = run, actions
+        return actions
+
+    def _reconcile(self, run: FrozenBacktestRun, actions: tuple[BacktestExpectedAction, ...],
+                   observations: Iterable[BacktestActionObservation]) -> BacktestExecutionPlan:
         expected_by_id = {action.action_id: action for action in actions}
         observed_by_id: dict[UUID, BacktestActionObservation] = {}
         duplicate_ids: set[UUID] = set()
@@ -469,6 +485,16 @@ class BacktestExecutor:
                 full_scope = ordinal == len(plan.ready_actions)
                 scope = expected if full_scope else (ready.action,)
                 checked = observe(run, scope)
+                if not full_scope:
+                    # The single affected owner has been reloaded. Validate its
+                    # exact response, without projecting every unrelated action.
+                    # Newly unlocked dependencies still require the full observe
+                    # at the end of this previously reconciled ready set.
+                    if (len(checked) != 1 or checked[0].action_id != ready.action.action_id
+                            or checked[0].state is BacktestObservedState.MISMATCH):
+                        raise BacktestExecutionIntegrityError("Backtest affected-owner reconciliation differs from its exact action")
+                    if checked[0].state is BacktestObservedState.MATCHED_COMPLETE:
+                        continue
                 checked_plan = self._planner.compile(run, checked)
                 if checked_plan.execution_state is BacktestExecutionState.INTEGRITY_ERROR:
                     mismatches = ",".join(map(str, checked_plan.integrity_mismatch_action_ids))

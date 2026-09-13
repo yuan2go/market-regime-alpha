@@ -24,8 +24,15 @@ def verify_historical_build(*, wheel: Path, lockfile: Path, source_checkout: Pat
         raise ValueError("study requires a full implementation Git SHA")
     def git(*args: str) -> str:
         return subprocess.check_output(["git", "-C", str(source_checkout), *args], text=True, stderr=subprocess.PIPE).strip()
-    if git("rev-parse", "HEAD") != code_sha or git("diff", "--name-only", "HEAD", "--", "src", "pyproject.toml", "uv.lock"):
+    if (git("rev-parse", "HEAD") != code_sha or git("diff", "--name-only", "HEAD", "--", "src", "pyproject.toml", "uv.lock")
+            or git("ls-files", "--others", "--exclude-standard", "--", "src", "pyproject.toml", "uv.lock")):
         raise ValueError("study source must match the exact committed implementation")
+    tracked = {name for name in git("ls-tree", "-r", "--name-only", "HEAD", "--", "src/market_regime_alpha").splitlines()
+               if name.endswith((".py", ".sql"))}
+    actual = {path.relative_to(source_checkout).as_posix() for path in (source_checkout / "src/market_regime_alpha").rglob("*")
+              if path.is_file() and path.suffix in {".py", ".sql"}}
+    if actual != tracked:
+        raise ValueError("study source roster must match the exact committed implementation, including ignored files")
     lock = lockfile.read_bytes()
     if lock != (source_checkout / "uv.lock").read_bytes():
         raise ValueError("study lockfile differs from the committed implementation")

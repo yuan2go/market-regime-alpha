@@ -75,7 +75,7 @@ def execute_holdout(app, arguments):
     with arguments.protocol.open("rb") as stream:
         content = stream.read(1024 * 1024 + 1)
     protocol = _closed_json(content)
-    if not isinstance(protocol, dict) or protocol.get("schema") != "mra-historical-campaign-boundary-v1":
+    if not isinstance(protocol, dict) or protocol.get("schema") not in {"mra-historical-campaign-boundary-v1", "mra-robustness-campaign-boundary-v2"}:
         raise ValueError("unsupported holdout boundary schema")
     spec = app.backtest_specifications.load_specification(arguments.development_run_id)
     future_code = protocol["future_holdout_study_code"]

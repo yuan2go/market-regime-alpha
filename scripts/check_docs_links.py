@@ -37,11 +37,15 @@ CANONICAL_DOCS = frozenset({
     "docs/archive/README.md",
 })
 SUPPLEMENTARY_DOC_ROOTS = ("docs/archive/",)
+DELIVERY_SNAPSHOTS = ("docs/archive/historical-campaign-01",)
 
 
 def markdown_files(root: Path) -> list[Path]:
+    frozen = {root / directory / name for directory in DELIVERY_SNAPSHOTS
+              if (manifest := root / directory / "snapshot-manifest.json").is_file()
+              for name in json.loads(manifest.read_text())["files"]}
     return sorted(p for p in (root / "docs").rglob("*.md")
-                  if "pre-hygiene" not in p.relative_to(root).parts)
+                  if "pre-hygiene" not in p.relative_to(root).parts and p not in frozen)
 
 
 def lines_outside_fences(text: str) -> list[tuple[int, str]]:
@@ -235,6 +239,47 @@ def check_archived_snapshot(root: Path) -> list[str]:
     return errors
 
 
+def check_delivery_snapshots(root: Path) -> list[str]:
+    """Authenticate imported original bytes and explicitly unbundled references."""
+    errors = []
+    for directory in DELIVERY_SNAPSHOTS:
+        base = root / directory
+        manifest = base / "snapshot-manifest.json"
+        if not manifest.is_file():
+            errors.append(f"missing delivery snapshot manifest: {directory}")
+            continue
+        snapshot = json.loads(manifest.read_text())
+        if snapshot.get("schema") != "historical-delivery-snapshot-v1":
+            errors.append(f"unsupported delivery snapshot: {directory}")
+            continue
+        files, external = snapshot["files"], snapshot["external_files"]
+        for name, record in {**files, **external}.items():
+            if (name.startswith("/") or posixpath.normpath(name) != name or ".." in name.split("/")
+                    or not re.fullmatch(r"[0-9a-f]{64}", record["sha256"])
+                    or type(record["size"]) is not int or record["size"] < 0):
+                errors.append(f"invalid snapshot identity: {directory}/{name}")
+        for name, record in external.items():
+            if name in files or record.get("availability") != "EXTERNAL_NOT_BUNDLED":
+                errors.append(f"ambiguous external snapshot reference: {directory}/{name}")
+        for name, record in files.items():
+            path = base / name
+            if not path.is_file():
+                errors.append(f"missing delivery snapshot file: {directory}/{name}")
+                continue
+            data = path.read_bytes()
+            if len(data) != record["size"] or hashlib.sha256(data).hexdigest() != record["sha256"]:
+                errors.append(f"delivery snapshot bytes changed: {directory}/{name}")
+            if name.endswith(".md"):
+                for match in LINK_RE.finditer(data.decode()):
+                    raw = match.group(1).strip().split()[0].strip("<>").split("#", 1)[0]
+                    if not raw or re.match(r"^(?:https?|mailto|tel):", raw):
+                        continue
+                    target = posixpath.normpath(posixpath.join(posixpath.dirname(name), raw))
+                    if target not in files and target not in external:
+                        errors.append(f"undeclared frozen delivery link: {directory}/{name} -> {raw}")
+    return errors
+
+
 def validate(root: Path = ROOT) -> list[str]:
     docs = markdown_files(root)
     return [
@@ -245,6 +290,7 @@ def validate(root: Path = ROOT) -> list[str]:
         *check_current_metadata(root),
         *check_constitution(root),
         *check_archived_snapshot(root),
+        *check_delivery_snapshots(root),
     ]
 
 

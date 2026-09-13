@@ -78,3 +78,27 @@ def test_fit_rejects_values_that_cannot_round_trip_through_prediction_precision(
     t = replace(t, rows=(replace(t.rows[0], features=(D("1e100"),)), *t.rows[1:]))
     with pytest.raises(ValueError, match="output precision"):
         ResearchBaselineTrainer().fit(t)
+
+
+@pytest.mark.parametrize("labels,expected", [
+    ((".01", ".02", ".30"), D(".02")),
+    ((".01", ".02", ".03", "1"), D(".025")),
+    (("-.03", "-.03", ".5"), D("-.03")),
+])
+def test_versioned_fit_median_round_trip_uses_only_training_labels(labels, expected):
+    t = replace(training("TRAINING_MEDIAN"), algorithm_version="2.0.0", rows=tuple(
+        LinearTrainingRow(UUID(int=n+10), (D(1),), D(label)) for n, label in enumerate(labels)))
+    fitted = ResearchBaselineTrainer().fit(t)
+    artifact = load_baseline_artifact(fitted.content)
+    assert artifact.intercept == expected and artifact.format_version == 2
+    assert ResearchBaselineTrainer().fit(replace(t, rows=tuple(reversed(t.rows)))) == fitted
+    model = FrozenModelVersionPayload(t.algorithm_code, t.algorithm_version, t.implementation_sha256,
+        fitted.content, fitted.content_sha256, t.feature_definition_ids, t.hyperparameters, t.seed, fitted.coefficient_count)
+    batch = ModelPredictionBatch((ModelPredictionRow(UUID(int=21), (D(1),)),))
+    assert ResearchBaselinePredictor().predict(model, batch)[0].point_estimate == expected
+    with pytest.raises(ValueError, match="baseline_kind"):
+        ResearchBaselineTrainer().fit(replace(t, algorithm_version="1.0.0"))
+    with pytest.raises(ValueError, match="schema or kind"):
+        load_baseline_artifact(fitted.content.replace(b"mra-research-baseline-v2", b"mra-research-baseline-v1"))
+    with pytest.raises(ValueError, match="differs from frozen"):
+        ResearchBaselinePredictor().predict(replace(model, algorithm_version="1.0.0"), batch)

@@ -194,6 +194,11 @@ _HOLDOUT_UPGRADE_CODE: Final = "backtest_exploratory_holdout_v12"
 _HOLDOUT_BUNDLE_SHA256: Final = "7b3fec55f3ad340dd65b462131d378693c9ab841fb09502e484ccce746958d87"
 _HOLDOUT_CATALOG_SHA256: Final = "8dfcb33cccc804d68119d1ed76f7abdf2c509d656e0a00d20031013b526d52f6"
 
+_ARCHIVE_CALENDAR_MIGRATION_NAME: Final = "009_exploratory_archive_calendar"
+_ARCHIVE_CALENDAR_UPGRADE_CODE: Final = "exploratory_archive_calendar_v13"
+_ARCHIVE_CALENDAR_BUNDLE_SHA256: Final = "a4c5d60a352c4bb40ff27238665dbe2d980db3a33095919cb4ec9ae5e9940165"
+_ARCHIVE_CALENDAR_CATALOG_SHA256: Final = "d6179abcc441cb13ddc11c862137d90ac436a252b106eddcde60704c8c3e4cca"
+
 
 _SCHEMA_COMMENT: Final = (
     "Market Regime Alpha MRA_REFOUNDATION_1 unreleased draft authority schema"
@@ -1290,6 +1295,9 @@ class SchemaManager:
         self._holdout_sql = _read_package_text("migrations", f"{_HOLDOUT_MIGRATION_NAME}.sql")
         if sha256_bytes(self._holdout_sql.encode("utf-8")) != _HOLDOUT_BUNDLE_SHA256:
             raise SchemaChecksumMismatchError("HOLDOUT_BUNDLE_CHANGED: register an exact incremental route")
+        self._archive_calendar_sql = _read_package_text("migrations", f"{_ARCHIVE_CALENDAR_MIGRATION_NAME}.sql")
+        if sha256_bytes(self._archive_calendar_sql.encode("utf-8")) != _ARCHIVE_CALENDAR_BUNDLE_SHA256:
+            raise SchemaChecksumMismatchError("ARCHIVE_CALENDAR_BUNDLE_CHANGED: register an exact incremental route")
         self._seed_sql = _read_package_text("seeds", "001_reference_seed.sql")
         self.baseline_checksum = sha256_bytes(self._baseline_sql.encode("utf-8"))
         self.seed_checksum = sha256_bytes(self._seed_sql.encode("utf-8"))
@@ -1320,6 +1328,7 @@ class SchemaManager:
             connection.execute(self._historical_archive_sql)
             connection.execute(self._model_subsets_sql)
             connection.execute(self._holdout_sql)
+            connection.execute(self._archive_calendar_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1338,6 +1347,7 @@ class SchemaManager:
             _insert_historical_archive_migration(connection)
             _insert_model_subsets_migration(connection)
             _insert_holdout_migration(connection)
+            _insert_archive_calendar_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return verification
@@ -1859,6 +1869,7 @@ class SchemaManager:
             connection.execute(self._historical_archive_sql)
             connection.execute(self._model_subsets_sql)
             connection.execute(self._holdout_sql)
+            connection.execute(self._archive_calendar_sql)
             catalog_checksum = _target_catalog_checksum(connection)
             connection.execute(
                 self._seed_sql,
@@ -1877,6 +1888,7 @@ class SchemaManager:
             _insert_historical_archive_migration(connection)
             _insert_model_subsets_migration(connection)
             _insert_holdout_migration(connection)
+            _insert_archive_calendar_migration(connection)
             verification = self._verify_connection(connection, created=True)
             connection.commit()
             return RecreateResult(
@@ -1947,7 +1959,7 @@ class SchemaManager:
         if expected_upgrade is not None and catalog_checksum != expected_upgrade.next_catalog_sha256:
             raise CatalogDriftError("UPGRADE_TARGET_CATALOG_MISMATCH")
         expected_catalog = (
-            _HOLDOUT_CATALOG_SHA256
+            _ARCHIVE_CALENDAR_CATALOG_SHA256
             if expected_upgrade is None
             else expected_upgrade.next_catalog_sha256
         )
@@ -1959,20 +1971,21 @@ class SchemaManager:
                 _REVISION_GAP_CATALOG_SHA256,
                 _DAILY_CATALOG_SHA256,
                 _DAILY_CLOSURE_CATALOG_SHA256,
-                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256,
+                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256,
             },
             with_daily=expected_catalog
-            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
+            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
             with_daily_closure=expected_catalog
-            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_static_research=expected_catalog in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_historical_archive=expected_catalog in {_HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_model_subsets=expected_catalog in {_MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_holdout=expected_catalog == _HOLDOUT_CATALOG_SHA256,
+            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_static_research=expected_catalog in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_historical_archive=expected_catalog in {_HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_model_subsets=expected_catalog in {_MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_holdout=expected_catalog in {_HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_archive_calendar=expected_catalog == _ARCHIVE_CALENDAR_CATALOG_SHA256,
         )
         if (
             expected_upgrade is None
-            and catalog_checksum != _HOLDOUT_CATALOG_SHA256
+            and catalog_checksum != _ARCHIVE_CALENDAR_CATALOG_SHA256
         ):
             raise CatalogDriftError("POST_BASELINE_CATALOG_MISMATCH: installed catalog is not the exact registered correction")
         _verify_primary_keys(connection, tables)
@@ -2398,6 +2411,13 @@ def _insert_holdout_migration(connection: psycopg.Connection[Any]) -> None:
     )
 
 
+def _insert_archive_calendar_migration(connection: psycopg.Connection[Any]) -> None:
+    connection.execute(
+        "INSERT INTO mra.schema_migrations (version,name,checksum,transactional,epoch_name) VALUES(9,%s,%s,true,%s)",
+        (_ARCHIVE_CALENDAR_MIGRATION_NAME, _ARCHIVE_CALENDAR_BUNDLE_SHA256, SCHEMA_EPOCH),
+    )
+
+
 def _verify_migration_registry(
     connection: psycopg.Connection[Any],
     baseline_checksum: str,
@@ -2409,6 +2429,7 @@ def _verify_migration_registry(
     with_historical_archive: bool = False,
     with_model_subsets: bool = False,
     with_holdout: bool = False,
+    with_archive_calendar: bool = False,
 ) -> None:
     rows = connection.execute(
         """
@@ -2440,6 +2461,8 @@ def _verify_migration_registry(
         expected.append((7, _MODEL_SUBSETS_MIGRATION_NAME, _MODEL_SUBSETS_BUNDLE_SHA256, True, SCHEMA_EPOCH))
     if with_holdout:
         expected.append((8, _HOLDOUT_MIGRATION_NAME, _HOLDOUT_BUNDLE_SHA256, True, SCHEMA_EPOCH))
+    if with_archive_calendar:
+        expected.append((9, _ARCHIVE_CALENDAR_MIGRATION_NAME, _ARCHIVE_CALENDAR_BUNDLE_SHA256, True, SCHEMA_EPOCH))
     actual = [tuple(row) for row in rows]
     if actual != expected:
         raise CatalogDriftError(
@@ -2462,16 +2485,17 @@ def _verify_exact_migration_registry(
                 _REVISION_GAP_CATALOG_SHA256,
                 _DAILY_CATALOG_SHA256,
                 _DAILY_CLOSURE_CATALOG_SHA256,
-                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256,
+                _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256,
             },
             with_daily=catalog_checksum
-            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
+            in {_DAILY_CATALOG_SHA256, _DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
             with_daily_closure=catalog_checksum
-            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_static_research=catalog_checksum in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_historical_archive=catalog_checksum in {_HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_model_subsets=catalog_checksum in {_MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256},
-            with_holdout=catalog_checksum == _HOLDOUT_CATALOG_SHA256,
+            in {_DAILY_CLOSURE_CATALOG_SHA256, _STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_static_research=catalog_checksum in {_STATIC_RESEARCH_CATALOG_SHA256, _HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_historical_archive=catalog_checksum in {_HISTORICAL_ARCHIVE_CATALOG_SHA256, _MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_model_subsets=catalog_checksum in {_MODEL_SUBSETS_CATALOG_SHA256, _HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_holdout=catalog_checksum in {_HOLDOUT_CATALOG_SHA256, _ARCHIVE_CALENDAR_CATALOG_SHA256},
+            with_archive_calendar=catalog_checksum == _ARCHIVE_CALENDAR_CATALOG_SHA256,
         )
     except CatalogDriftError as exc:
         raise UnsafeOperationalUpgradeError(
@@ -2888,7 +2912,19 @@ def _wp18q_operational_upgrade_definitions(
     )
     if v12.additive_bundle_sha256 != _HOLDOUT_BUNDLE_SHA256:
         raise OperationalUpgradeIntegrityError("HOLDOUT_BUNDLE_CHANGED: register an exact incremental route")
-    return (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12)
+    v13 = _OperationalUpgradeDefinition(
+        upgrade_code=_ARCHIVE_CALENDAR_UPGRADE_CODE,
+        prior_baseline_sha256=v12.next_baseline_sha256,
+        prior_catalog_sha256=v12.next_catalog_sha256,
+        prior_reference_vocabulary_sha256=v12.next_reference_vocabulary_sha256,
+        next_baseline_sha256=v12.next_baseline_sha256,
+        next_catalog_sha256=_ARCHIVE_CALENDAR_CATALOG_SHA256,
+        next_reference_vocabulary_sha256=v12.next_reference_vocabulary_sha256,
+        additive_sql=_read_package_text("migrations", f"{_ARCHIVE_CALENDAR_MIGRATION_NAME}.sql"),
+    )
+    if v13.additive_bundle_sha256 != _ARCHIVE_CALENDAR_BUNDLE_SHA256:
+        raise OperationalUpgradeIntegrityError("ARCHIVE_CALENDAR_BUNDLE_CHANGED: register an exact incremental route")
+    return (v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13)
 
 
 def _split_postgres_statements(payload: str) -> tuple[str, ...]:
@@ -3321,6 +3357,8 @@ def _update_operational_upgrade_metadata(
         _insert_model_subsets_migration(connection)
     if definition.upgrade_code == _HOLDOUT_UPGRADE_CODE:
         _insert_holdout_migration(connection)
+    if definition.upgrade_code == _ARCHIVE_CALENDAR_UPGRADE_CODE:
+        _insert_archive_calendar_migration(connection)
     connection.execute(
         "ALTER TABLE mra.schema_epoch DISABLE TRIGGER schema_epoch_append_only"
     )

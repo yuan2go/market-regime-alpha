@@ -23,14 +23,17 @@ class PostgresHistoricalFeatureInputReadPort:
             raise ValueError("historical input requires 1..500 unique population members")
         with self._pool.connection(read_only=True) as connection:
             archive = connection.execute("""
-                SELECT archive.provider_product_id, archive.exchange_code
+                SELECT archive.provider_product_id, archive.exchange_code, archive.price_basis
                 FROM mra.market_archive archive JOIN mra.market_archive_seal seal USING (market_archive_id)
                 WHERE archive.market_archive_id=%s AND seal.market_archive_seal_id=%s AND seal.knowledge_cutoff=%s
                   AND archive.lane='RETROSPECTIVE_BACKFILL' AND archive.evidence_class='EXPLORATORY_RETROSPECTIVE'
-                  AND archive.price_basis='MIXED_EXPLICIT'
+                  AND archive.price_basis IN ('MIXED_EXPLICIT','RAW_UNADJUSTED')
                 """, (scope.market_archive_id, scope.market_archive_seal_id, scope.knowledge_cutoff)).fetchone()
             if archive is None:
-                raise RuntimeStateConflictError("exact sealed mixed historical price inventory is absent")
+                raise RuntimeStateConflictError("exact sealed historical price inventory is absent")
+            # RAW supports intraday observations only. Missing adjusted prices
+            # stay missing; a source's RAW declaration never implies continuity.
+            price_bases=['RAW_UNADJUSTED','BACKWARD_ADJUSTED'] if archive[2]=='MIXED_EXPLICIT' else ['RAW_UNADJUSTED']
             roster = connection.execute("""
                 SELECT instrument.instrument_id, instrument.exchange FROM mra.instrument instrument
                 WHERE instrument.instrument_id=ANY(%s)
@@ -47,9 +50,8 @@ class PostgresHistoricalFeatureInputReadPort:
                     row_number() OVER (PARTITION BY exchange ORDER BY session_date DESC) AS position
                 FROM mra.trading_session session
                 WHERE exchange=ANY(%s) AND session_date<=%s
-                  AND EXISTS (SELECT 1 FROM mra.market_capture_trading_session_normalization binding
-                    JOIN mra.market_archive_capture_observation observation USING (capture_id)
-                    WHERE binding.session_id=session.session_id AND observation.market_archive_id=%s AND observation.known_at<=%s)
+                  AND EXISTS (SELECT 1 FROM mra.exploratory_archive_calendar_capture(session.session_id,%s,%s)
+                    WHERE foundation_integrity)
                 ) calendar WHERE position<=21 ORDER BY exchange, session_date
                 """, (sorted(exchanges), session_date, scope.market_archive_id, scope.knowledge_cutoff)).fetchall()
             by_exchange = {exchange: [s for s in calendar_rows if s[3] == exchange] for exchange in exchanges}
@@ -68,7 +70,7 @@ class PostgresHistoricalFeatureInputReadPort:
                 JOIN mra.data_capture capture ON capture.capture_id=bar.capture_id AND capture.status='CAPTURED'
                 JOIN mra.artifact artifact ON artifact.artifact_id=capture.artifact_id
                 WHERE bar.provider_product_id=%s AND bar.instrument_id=ANY(%s) AND bar.session_id=ANY(%s)
-                  AND bar.timeframe='DAILY' AND bar.price_basis IN ('RAW_UNADJUSTED','BACKWARD_ADJUSTED')
+                  AND bar.timeframe='DAILY' AND bar.price_basis=ANY(%s)
                   AND bar.event_start=session.open_at AND bar.event_end=session.close_at
                   AND bar.event_end<=%s AND bar.decision_visible_at<=%s AND bar.recorded_at<=%s AND capture.recorded_at<=%s
                   AND EXISTS (SELECT 1 FROM mra.market_archive_capture_observation observation
@@ -76,7 +78,7 @@ class PostgresHistoricalFeatureInputReadPort:
                   AND NOT EXISTS (SELECT 1 FROM mra.market_bar_revision successor
                     WHERE successor.supersedes_revision_id=bar.bar_revision_id AND successor.decision_visible_at<=%s)
                 ORDER BY bar.instrument_id, session.session_date, bar.price_basis, bar.bar_revision_id
-                """, (archive[0], list(instruments), session_ids, scope.simulated_event_cutoff,
+                """, (archive[0], list(instruments), session_ids, price_bases, scope.simulated_event_cutoff,
                     scope.knowledge_cutoff, scope.knowledge_cutoff, scope.knowledge_cutoff,
                     scope.market_archive_id, scope.knowledge_cutoff, scope.knowledge_cutoff)).fetchall()
             gaps = connection.execute("""
@@ -84,11 +86,11 @@ class PostgresHistoricalFeatureInputReadPort:
                 FROM mra.source_gap gap JOIN mra.trading_session session USING (session_id)
                 WHERE gap.provider_product_id=%s AND gap.instrument_id=ANY(%s) AND gap.session_id=ANY(%s)
                   AND gap.fact_kind='MARKET_BAR' AND gap.timeframe='DAILY'
-                  AND gap.price_basis IN ('RAW_UNADJUSTED','BACKWARD_ADJUSTED')
+                  AND gap.price_basis=ANY(%s)
                   AND gap.decision_visible_at<=%s AND gap.recorded_at<=%s AND gap.event_end<=%s
                   AND EXISTS (SELECT 1 FROM mra.market_archive_capture_observation observation
                     WHERE observation.capture_id=gap.capture_id AND observation.market_archive_id=%s AND observation.known_at<=%s)
-                """, (archive[0], list(instruments), session_ids, scope.knowledge_cutoff, scope.knowledge_cutoff,
+                """, (archive[0], list(instruments), session_ids, price_bases, scope.knowledge_cutoff, scope.knowledge_cutoff,
                     scope.simulated_event_cutoff, scope.market_archive_id, scope.knowledge_cutoff)).fetchall()
             failures = read_historical_failures(connection, scope.market_archive_id, scope.knowledge_cutoff, scope.simulated_event_cutoff)
         for digest, size, readable in {(str(b[8]), int(b[9]), bool(b[10])) for b in bars}:

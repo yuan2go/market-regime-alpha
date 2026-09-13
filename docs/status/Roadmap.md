@@ -8,6 +8,73 @@ the next experiment or deployment. Repository hygiene is complete at the
 implementation recorded in the archive index. Business feature development and
 live configuration changes require their own explicit scope.
 
+## Active: research robustness and throughput 02
+
+Authorized baseline: `faa67fbaf918fd3fb54c3a9b75cfe2c8a461fb6b`.
+Reuse the persistent historical research database and Artifact root, preserving
+all prior experiments and protected labels. Destructive PostgreSQL contracts use
+a separately identified disposable database. No operational mutation, deployment,
+paid calls, outbound delivery, trading, push, PR or merge is authorized.
+
+The implementation stays within existing Market/Archive, Dataset, Model,
+Partition/Experiment, Backtest/Runtime, Outcome, Evaluation and Artifact owners.
+This plan supersedes the earlier package's candidate/window budget only for new
+versioned research declarations. Old protocols, SQL and results retain their bytes.
+
+- [x] Reproduce and fix request-level Provider failure attribution over complete
+  inventory windows; reject Calendar dependencies without the selected Archive
+  binding before historical preparation writes any declaration or Artifact.
+- [x] Profile one small representative real-history canonical scope at baseline,
+  including source/physical reads, features, Dataset, FIT, training, prediction,
+  Outcome, Evaluation, graph, reconciliation and report. Retain original timings.
+- [x] Reduce measured repeated preparation/graph/verification cost with exact,
+  bounded process-local reuse and live commit checks. Compare identical input
+  predictions/labels/populations against baseline (exact Decimal output at its
+  declared precision; binary64 internals at declared serializer precision).
+- [x] Version the finite rolling plan and holdout contract for five main candidates:
+  ZERO, FIT mean, FIT median, original Ridge v2 and the exact previous momentum
+  Ridge recipe. Prefer one 126-session FIT specification; at most one additional
+  predeclared 252-session variant, ten configurations total. No alpha search.
+  FIT may overlap only under a frozen mature-label update rule; validation
+  scoring dates cannot repeat. Old protected holdout labels remain excluded
+  unless an explicit owner usage contract is independently implemented.
+- [x] Resolve exact dates from Archive Calendar and prior access facts. Target
+  at least 120 distinct development target dates across twelve months/two years
+  plus at least 50 subsequent, unused heldout target dates. Freeze exact candidates,
+  dates, exclusions, selection/access rules and measured action/time/storage budget
+  before execution or new heldout result access. Record any unmet coverage goal.
+- [ ] Execute the frozen plan with the canonical bounded run/resume chain and
+  fresh per-fold models. Retain failures and prove interruption recovery and
+  zero repeated completed actions; reconcile reports and physical lineage.
+- [x] Extend reconciled comparison to primary paired MAE and daily Rank IC
+  differences, own/core-pair/all-arm samples, fold/month/year results, security
+  concentration and leave-one-security-out diagnostics. Inspect fold-standardized
+  coefficients, preprocessing and FIT-only feature conditioning. Predeclare
+  five-session blocks within contiguous fold intervals, seed 18, 1,000 draws;
+  never join gaps or count names as independent dates. Report descriptive
+  multiple-comparison limits and unavailable economic execution/account evidence.
+  Explicit projection v3 also exposes independent model IC when a constant
+  reference cannot supply a paired rank; original v1/v2 bytes and paired
+  intervals remain unchanged, with real pilot and independent rank checks.
+- [x] Bridge evidenced professional recording semantics through existing Capture
+  and Market normalization to the same Dataset/model/Outcome consumers. Preserve
+  unknown mappings as refusals. Test a local substitute when no authorized real
+  sample exists; provide layered fixed-model source comparison with exact identities.
+- [ ] Complete affected regression, installed wheel/CLI, any required registered
+  upgrade/fresh restore, current documentation and a non-sensitive review bundle
+  containing actual candidate/date/results/access/model/source hashes. Large source
+  data, logs, wheels and backups stay in persistent external research storage.
+
+| Change risk | Necessary verification |
+|---|---|
+| Failure scope/calendar provenance | Real PostgreSQL failing repro, full multi-date/basis/security isolation, legitimate shared session binding across products and normalization cutoffs, missing final label rejected before declarations; registered v12→v13 SQL upgrade/byte-preserving retry |
+| Reuse changes facts or hides corruption | Same real input before/after numeric and roster comparison; mutated/missing Artifact refusal; bounded cache identity/invalidation; actual phase and drain costs |
+| Rolling FIT or holdout leaks labels | Mature-label boundary and train-only preprocessing; repeated scoring/foreign access refused; old decoder unchanged; real PostgreSQL reservation/opening/concurrency |
+| Constants/missingness distort comparisons | Independent median/error/rank calculations; constant IC unavailable; full/own/pair/all-arm denominators; gaps and concentration retained |
+| Runtime/owner changes compromise recovery | Atomic Receipt/Audit/completion, fence, lost ACK, interrupted real chain and original-plan resume; affected shared regressions only |
+| Professional mapping inflates source authority | Original recording/Capture identity, evidenced units/time/adjustment, unknown mapping rejection, local end-to-end and layered comparison; real Provider separately NOT_RUN |
+| Packaging/replay/evidence drift | Frozen lock, static/docs/inventory checks, independent wheel CLI and exact report/source hashes; forward migration and fresh restore if formats/owners change |
+
 ## Delivered: historical research campaign
 
 Baseline main is `2e5474342ec14b2dc74704cfa9ef981ffcfec870`. The task authorizes

@@ -369,6 +369,7 @@ class PostgresSelectionMarketQueries:
             instrument_id=instrument_id,
             decision_time=DecisionTime(retrospective.simulated_event_cutoff),
             visibility_cutoff=retrospective.knowledge_cutoff,
+            retrospective=retrospective,
         )
         self._require_archive_lineage(evidence.lineage, retrospective)
         return evidence
@@ -381,6 +382,7 @@ class PostgresSelectionMarketQueries:
         instrument_id: InstrumentId,
         decision_time: DecisionTime,
         visibility_cutoff: datetime,
+        retrospective: ExploratoryRetrospectiveSelectionScope | None = None,
     ) -> CriterionEvidence:
         if rule.rule_kind is EligibilityRuleKind.NOT_SPECIAL_TREATMENT:
             return self._effective_status(
@@ -423,6 +425,7 @@ class PostgresSelectionMarketQueries:
             decision_time=decision_time,
             visibility_cutoff=visibility_cutoff,
             completed=rule.rule_kind is EligibilityRuleKind.LAST_COMPLETED_SESSION_ACTIVE,
+            retrospective=retrospective,
         )
         if isinstance(session, CriterionEvidence):
             return session
@@ -528,55 +531,79 @@ class PostgresSelectionMarketQueries:
         decision_time,
         visibility_cutoff,
         completed=False,
+        retrospective=None,
     ):
         session_date = decision_time.value.astimezone(ZoneInfo("Asia/Shanghai")).date()
         if completed:
             closed = self._connection.execute("""
                 SELECT session.session_date FROM mra.trading_session session
                 JOIN mra.instrument instrument ON instrument.exchange=session.exchange
-                WHERE instrument.instrument_id=%s AND session.close_at<=%s AND session.decision_visible_at<=%s
+                WHERE instrument.instrument_id=%s AND session.close_at<=%s AND (%s OR session.decision_visible_at<=%s)
                 ORDER BY session.session_date DESC LIMIT 1
-                """, (instrument_id.value,decision_time.value,visibility_cutoff)).fetchone()
+                """, (instrument_id.value,decision_time.value,retrospective is not None,visibility_cutoff)).fetchone()
             if closed is None:
                 return CriterionEvidence(status=MarketEvidenceStatus.MISSING,lineage=MarketLineage())
             session_date = closed[0]
-        row = self._connection.execute(
-            """
-            SELECT session.session_id, session.source_capture_id,
-                   session.decision_visible_at,
-                   mra.market_artifact_is_readable(
-                       artifact.integrity_state, artifact.last_verified_at
-                   ), instrument.currency,
-                   mra.market_artifact_is_readable(
-                       instrument_artifact.integrity_state,
-                       instrument_artifact.last_verified_at
-                   )
-            FROM mra.instrument AS instrument
-            JOIN mra.trading_session AS session
-              ON session.exchange = instrument.exchange
-            JOIN mra.data_capture AS capture
-              ON capture.capture_id = session.source_capture_id
-            JOIN mra.artifact AS artifact
-              ON artifact.artifact_id = capture.artifact_id
-            JOIN mra.data_capture AS instrument_capture
-              ON instrument_capture.capture_id = instrument.source_capture_id
-            JOIN mra.artifact AS instrument_artifact
-              ON instrument_artifact.artifact_id = instrument_capture.artifact_id
-            WHERE instrument.instrument_id = %s
-              AND session.session_date = %s
-              AND capture.provider_product_id = %s
-              AND session.decision_visible_at <= %s
-              AND capture.status = 'CAPTURED'
-            ORDER BY session.decision_visible_at DESC, session.session_id DESC
-            LIMIT 1
-            """,
-            (
-                instrument_id.value,
-                session_date,
-                market_provider_product_id,
-                visibility_cutoff,
-            ),
-        ).fetchone()
+        if retrospective is None:
+            row = self._connection.execute(
+                """
+                SELECT session.session_id, session.source_capture_id,
+                       session.decision_visible_at,
+                       mra.market_artifact_is_readable(
+                           artifact.integrity_state, artifact.last_verified_at
+                       ), instrument.currency,
+                       mra.market_artifact_is_readable(
+                           instrument_artifact.integrity_state,
+                           instrument_artifact.last_verified_at
+                       )
+                FROM mra.instrument AS instrument
+                JOIN mra.trading_session AS session
+                  ON session.exchange = instrument.exchange
+                JOIN mra.data_capture AS capture
+                  ON capture.capture_id = session.source_capture_id
+                JOIN mra.artifact AS artifact
+                  ON artifact.artifact_id = capture.artifact_id
+                JOIN mra.data_capture AS instrument_capture
+                  ON instrument_capture.capture_id = instrument.source_capture_id
+                JOIN mra.artifact AS instrument_artifact
+                  ON instrument_artifact.artifact_id = instrument_capture.artifact_id
+                WHERE instrument.instrument_id = %s
+                  AND session.session_date = %s
+                  AND capture.provider_product_id = %s
+                  AND session.decision_visible_at <= %s
+                  AND capture.status = 'CAPTURED'
+                ORDER BY session.decision_visible_at DESC, session.session_id DESC
+                LIMIT 1
+                """,
+                (
+                    instrument_id.value,
+                    session_date,
+                    market_provider_product_id,
+                    visibility_cutoff,
+                ),
+            ).fetchone()
+        else:
+            row = self._connection.execute("""
+                SELECT session.session_id,binding.capture_id,binding.decision_visible_at,
+                       binding.foundation_integrity,instrument.currency,
+                       EXISTS (
+                           SELECT 1 FROM mra.market_capture_instrument_normalization source
+                           JOIN mra.market_capture_reference_normalization normalized USING(capture_id)
+                           JOIN mra.market_archive_capture_observation observation USING(capture_id)
+                           JOIN mra.data_capture capture USING(capture_id)
+                           JOIN mra.artifact artifact USING(artifact_id)
+                           WHERE source.instrument_id=instrument.instrument_id
+                             AND observation.market_archive_id=%s AND observation.known_at<=%s
+                             AND normalized.recorded_at<=%s AND capture.recorded_at<=%s
+                             AND capture.provider_product_id=%s AND capture.status='CAPTURED'
+                             AND mra.market_artifact_is_readable(artifact.integrity_state,artifact.last_verified_at)
+                       )
+                FROM mra.instrument instrument JOIN mra.trading_session session ON session.exchange=instrument.exchange
+                CROSS JOIN LATERAL mra.exploratory_archive_calendar_capture(session.session_id,%s,%s) binding
+                JOIN mra.data_capture calendar_capture ON calendar_capture.capture_id=binding.capture_id
+                WHERE instrument.instrument_id=%s AND session.session_date=%s AND calendar_capture.provider_product_id=%s
+                """,(retrospective.market_archive_id,visibility_cutoff,visibility_cutoff,visibility_cutoff,market_provider_product_id,
+                    retrospective.market_archive_id,visibility_cutoff,instrument_id.value,session_date,market_provider_product_id)).fetchone()
         gap = self._session_gap(
             market_provider_product_id=market_provider_product_id,
             instrument_id=instrument_id,

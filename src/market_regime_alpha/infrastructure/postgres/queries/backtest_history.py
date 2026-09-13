@@ -341,7 +341,10 @@ class PostgresCurrentBacktestAuthorityQueryPort:
         with self._pool.connection(read_only=True) as connection:
             rows = connection.execute(
                 """
-                SELECT DISTINCT artifact_id, content_sha256, size_bytes
+                SELECT DISTINCT binding.artifact_id, binding.content_sha256, binding.size_bytes,
+                    artifact.content_sha256 = binding.content_sha256
+                    AND artifact.size_bytes = binding.size_bytes
+                    AND mra.market_artifact_is_readable(artifact.integrity_state, artifact.last_verified_at) AS readable
                 FROM (
                     SELECT code_artifact_id AS artifact_id,
                            code_content_sha256 AS content_sha256,
@@ -386,13 +389,26 @@ class PostgresCurrentBacktestAuthorityQueryPort:
                            report.markdown_size_bytes
                     FROM mra.backtest_report_artifact AS report
                     WHERE report.exploratory_backtest_run_id = %s
+                    UNION ALL
+                    SELECT capture.artifact_id, observation.artifact_sha256,
+                           observation.artifact_size_bytes
+                    FROM mra.exploratory_backtest_run AS root
+                    JOIN mra.market_archive_seal AS seal USING (market_archive_seal_id)
+                    JOIN mra.market_archive_capture_observation AS observation
+                      ON observation.market_archive_id = root.market_archive_id
+                     AND observation.recorded_at <= seal.knowledge_cutoff
+                    JOIN mra.data_capture AS capture USING (capture_id)
+                    WHERE root.exploratory_backtest_run_id = %s
                 ) AS binding
-                ORDER BY artifact_id
+                LEFT JOIN mra.artifact AS artifact ON artifact.artifact_id = binding.artifact_id
+                ORDER BY binding.artifact_id
                 """,
-                (exploratory_backtest_run_id,) * 7,
+                (exploratory_backtest_run_id,) * 8,
             ).fetchall()
         if len(rows) < 2:
             raise ArtifactIntegrityError("current Backtest root Artifact bindings do not reconcile")
+        if any(not row[3] for row in rows):
+            raise ArtifactIntegrityError("current Backtest source or derived Artifact binding is not readable")
         return BacktestAuthoritySnapshot(
             run,
             tuple(

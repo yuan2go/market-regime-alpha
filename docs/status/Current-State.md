@@ -8,6 +8,105 @@ research qualification. Verification results must match the affected implementat
 scope; earlier hygiene evidence remains in the archive index.
 
 
+## Research robustness and throughput in progress
+
+The new package starts at `faa67fbaf918fd3fb54c3a9b75cfe2c8a461fb6b`.
+Historical inventory now maps original request-level Provider failures to the
+complete observed security/session/price-basis range, retaining exact gap IDs
+and successful revisions. Historical preparation rejects Calendar facts without
+the selected Archive's Capture/normalization bindings, including the immediate
+final label session, before publishing study inputs. The five disposable
+PostgreSQL boundary cases pass, including the Partition embargo tail; exact baseline query bodies fail the three
+negative cases and pass the shared-binding case. Adjacent Feature/failure-lineage
+checks also pass. These initial query corrections required no migration and
+changed no original research result.
+
+The persistent old comparison and protocol hashes have been reloaded. A new,
+separately identified real-data engineering run measures the baseline canonical
+cost: 127 actions completed in 846.48 seconds including final reconciliation
+under cProfile (shared-host engineering measurement, not capacity qualification).
+The bounded parser reuses at most eight exact manifests of at most two MiB each
+and their immutable parsed values; altered bytes or frozen Dataset/Feature
+identities miss the cache. Physical reads and owner integrity checks remain live.
+The executor retains one immutable action graph and observes each completed
+action before full reconciliation at dependency and drain boundaries.
+The same 127-action scope completes after an observed query cancellation and
+original-plan resume (68 committed actions retained; 59 remaining actions).
+All 464 validation inputs match exactly in prediction, label, state and exclusion
+reason, and the common population is unchanged. Timed execution, failure,
+recovery and report/comparison total 702.90 seconds versus 874.79 seconds before;
+shared-host PostgreSQL interference prevents treating this one pair as a stable
+capacity estimate. Preparation and diagnostic progress are outside this timing
+comparison; their available records remain separate. The original failure
+remains in the external command index.
+
+The distinct `mra-historical-rolling-v2` preparation contract supports overlapping
+FIT windows and non-repeated validation, with Calendar-verified stride. It keeps
+ZERO, FIT mean, FIT median and original Ridge controls plus up to six explicit
+Ridge hypotheses. Constants use an archived listing-fact intercept instead of
+a price feature. Median uses research-baseline algorithm/artifact v2; v1 still
+decodes unchanged and refuses the new kind. The v2 holdout boundary reuses the
+original append-only reservation/opening owners and protected-label guards.
+A 126-session FIT protocol now freezes five candidates, six development folds
+with 132 distinct target days across July 2023–June 2024, and a separate 50-day
+February–April 2025 holdout. The latter is reserved before execution and remains
+unopened. The former has started through the independently installed frozen
+wheel, with bounded drain and original-plan resume; action counts are engineering
+progress, not independent statistical observations.
+
+The same-model lineage reader now decodes both registered baseline formats;
+its former version-1-only branch rejected the new median control. The real,
+already accessed five-model pilot confirms the correction through PostgreSQL
+read-only transactions, without retraining or rewriting fitted bytes. Lineage
+also reports original FIT decision/label time bounds by sample state and reason,
+retaining exclusions separately from estimable training rows. Installed CLI
+verification of this correction follows the authorized research schema upgrade.
+
+An explicit `history-compare --projection-version 3` now adds independent daily
+IC summaries for each arm's own/common populations and each primary pair. The
+original paired summary requires both model and reference ranks, so a constant
+ZERO reference left its paired model mean unavailable even when the model's daily
+values existed. V3 exposes those original values independently; constant IC and
+paired differences against constants remain NOT_ESTIMABLE. Default v1/v2 output,
+selection rules and original projection hashes retain their meaning. The already
+accessed real five-arm pilot reproduces its original v2 projection hash and passes
+independent tied-rank calculations over all 58 common observations; its original
+file bytes remain unchanged. These two dates are engineering consumer evidence,
+not new long-window validation.
+
+An evidenced professional recording can now embed its mapping in Capture
+v3 and normalize RAW daily bars through the original Market owner. The local
+recorded PostgreSQL chain reaches Dataset, five fitted models, Outcome, Evaluation
+and replay. Corrupting the original Capture revealed a replay roster omission;
+current replay now includes original sealed Archive Capture bindings and verifies
+their physical bytes. The synthetic chain's repair regression passes. Real
+professional data, adjustment equivalence and Provider/PIT qualification remain
+NOT_RUN. The two-source recorded regression now completes ten fitted models,
+canonical Outcome/Evaluation, same-source controls, fixed-model data replay and
+fixed-protocol retraining comparisons. A missing price with independently known
+ACTIVE status retains 32 constant predictions versus 31 Ridge predictions;
+physical Capture corruption is rejected and comparison preserves the business
+fact hash. The 41 adjacent PostgreSQL owner cases pass. The separate registered
+upgrade case first failed on a new test's exception-class expectation; its corrected
+rerun passes the original exact error-code contract, byte-preserving upgrade and
+lost-ACK retry.
+Cross-product execution exposed a further SQL boundary:
+Dataset submission followed the shared Calendar's first Capture rather than its
+selected Archive binding. The same first-Capture assumption also affected
+Selection read/commit checks; the recorded negative fixture retained 480 UNKNOWN
+member slots and zero FIT samples. Forward migration 009 and the matching
+exploratory Selection/Dataset read/commit paths pass the recorded chain and
+registered upgrade/compatibility checks. They preserve historical
+SQL/rows and require
+exact Capture/normalization knowledge and current integrity. Outcome keeps its
+canonical Session FK bytes while separately verifying the selected Archive's
+actual next-session binding. Recorded Archive
+preparation also freezes an explicit RAW-only inventory scope through existing
+owners; request completion and normalized quality gaps remain separate.
+
+Long-window and new holdout research are not yet completed; follow the
+active [Roadmap](Roadmap.md) rather than the old delivery gates below.
+
 ## Historical research campaign delivered
 
 The independent historical pilot at implementation
@@ -24,7 +123,9 @@ approximately -0.195. Constants retain NOT_ESTIMABLE rank diagnostics. This is a
 tiny descriptive result with STATIC_UNIVERSE / SURVIVORSHIP_LIMITED / retrospective
 knowledge limitations; it establishes neither stable model increment nor formal
 PIT/OOS or economic validity. Feature ablation and protected temporal validation
-remain active work in the [Roadmap](Roadmap.md).
+were incomplete at that pilot cutoff and subsequently completed within the
+limited scope recorded below. The new robustness work is tracked separately in
+the [Roadmap](Roadmap.md).
 
 The independent expansion acquired all 97 frozen BaoStock requests under
 implementation `c8dac4b14789cd828c2f302bc9ded41fa24b1aa0` and sealed archive

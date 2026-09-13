@@ -30,6 +30,15 @@ def model_training_lineage(pool: Any, store: Any, model_version_id: UUID) -> dic
             datasets = cursor.execute("""SELECT DISTINCT decision.dataset_id FROM mra.model_training_sample sample
                 JOIN mra.decision_run decision USING(decision_run_id) WHERE sample.model_training_run_id=%s
                 ORDER BY decision.dataset_id""", (version.model_training_run_id,)).fetchall()
+            event_bounds = cursor.execute("""SELECT sample.sample_state, sample.reason_code, count(*) AS sample_count,
+                count(DISTINCT decision.decision_time) AS distinct_fit_decisions,
+                min(decision.decision_time) AS first_fit_decision, max(decision.decision_time) AS last_fit_decision,
+                min(outcome.observation_cutoff) AS first_fit_label_cutoff,
+                max(outcome.observation_cutoff) AS last_fit_label_cutoff
+                FROM mra.model_training_sample sample JOIN mra.decision_run decision USING(decision_run_id)
+                JOIN mra.market_target_outcome_revision outcome USING(market_target_outcome_revision_id)
+                WHERE sample.model_training_run_id=%s GROUP BY sample.sample_state,sample.reason_code
+                ORDER BY sample.sample_state,sample.reason_code""", (version.model_training_run_id,)).fetchall()
             lineage = cursor.execute("SELECT * FROM mra.backtest_model_lineage WHERE model_version_id=%s", (model_version_id,)).fetchall()
             uses = cursor.execute("SELECT experimental_model_use_id FROM mra.experimental_model_use WHERE model_version_id=%s ORDER BY registered_at,experimental_model_use_id", (model_version_id,)).fetchall()
     if fitted is None or (fitted["content_sha256"], fitted["size_bytes"]) != (fitted["frozen_sha256"], fitted["frozen_size"]):
@@ -38,17 +47,26 @@ def model_training_lineage(pool: Any, store: Any, model_version_id: UUID) -> dic
     if sha256(content).hexdigest() != fitted["frozen_sha256"]:
         raise ArtifactIntegrityError("MODEL_FITTED_ARTIFACT_BYTES_DIFFER")
     registered = PostgresModelTrainingInputProvider(pool, store).load_registered_reproducible(version.model_training_run_id)
-    if registered.training.algorithm_code == "research_baseline" and registered.training.algorithm_version == "1.0.0":
-        from market_regime_alpha.infrastructure.models.research_baselines import load_baseline_artifact
-        decoded: Any = load_baseline_artifact(content)
-    elif registered.training.algorithm_code == "deterministic_ridge":
-        decoded = load_deterministic_ridge_artifact(content)
-    else:
-        raise ArtifactIntegrityError("MODEL_LINEAGE_UNSUPPORTED_ARTIFACT_ALGORITHM")
+    decoded = _decode_fitted_artifact(registered.training.algorithm_code, registered.training.algorithm_version, content)
+    if sum(row["sample_count"] for row in event_bounds if row["sample_state"] == "ESTIMABLE") != len(registered.training.linear_rows):
+        raise ArtifactIntegrityError("MODEL_TRAINING_EVENT_ROSTER_DIFFERS")
     if registered.training.model_id != version.model_id or tuple(decoded.feature_definition_ids) != tuple(registered.training.feature_definition_ids):
         raise ArtifactIntegrityError("MODEL_FITTED_FEATURE_ROSTER_DIFFERS")
     return {"model": asdict(model), "model_version": asdict(version), "training_run": asdict(training),
             "training_datasets": datasets, "training_reproducibility": asdict(registered.reproducibility),
+            "fit_event_bounds_by_sample_state": event_bounds,
             "fitted_artifact": fitted, "fitted_format_version": decoded.format_version,
             "backtest_model_lineage": lineage, "experimental_model_uses": uses,
             "physical_training_and_fitted_bytes": "VERIFIED", "business_writes": 0}
+
+
+def _decode_fitted_artifact(algorithm_code: str, algorithm_version: str, content: bytes) -> Any:
+    if algorithm_code == "research_baseline" and algorithm_version in {"1.0.0", "2.0.0"}:
+        from market_regime_alpha.infrastructure.models.research_baselines import load_baseline_artifact
+        decoded = load_baseline_artifact(content)
+        if decoded.format_version != {"1.0.0": 1, "2.0.0": 2}[algorithm_version]:
+            raise ArtifactIntegrityError("MODEL_FITTED_ALGORITHM_VERSION_DIFFERS")
+        return decoded
+    if algorithm_code == "deterministic_ridge":
+        return load_deterministic_ridge_artifact(content)
+    raise ArtifactIntegrityError("MODEL_LINEAGE_UNSUPPORTED_ARTIFACT_ALGORITHM")

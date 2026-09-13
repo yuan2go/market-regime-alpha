@@ -14,12 +14,16 @@ from market_regime_alpha.research_qualification.domain.historical_comparison imp
 )
 from market_regime_alpha.research_qualification.errors import BacktestReportIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.research_qualification.ports.source_comparison import SourceComparisonInputs
+from market_regime_alpha.research_qualification.ports.model_execution import ModelPredictor
 
 
 class HistoricalComparisonInputs(Protocol):
     def load(self, run_id: UUID) -> tuple[HistoricalEvaluationPoint, ...]: ...
 
     def contiguous_folds(self, run_id: UUID) -> frozenset[UUID]: ...
+
+    def fitted_diagnostics(self, run_id: UUID) -> tuple[dict, ...]: ...
 
 
 class HistoricalSpecificationReader(Protocol):
@@ -33,10 +37,21 @@ class HistoricalComparisonApplication:
         reports: BacktestReportApplication,
         diagnostics: BacktestDiagnosticsSourcePort,
         specifications: HistoricalSpecificationReader,
+        source_inputs: SourceComparisonInputs | None = None,
+        model_predictor: ModelPredictor | None = None,
     ) -> None:
         self._inputs, self._reports, self._diagnostics, self._specifications = inputs, reports, diagnostics, specifications
+        self._source_inputs, self._model_predictor = source_inputs, model_predictor
 
-    def project(self, run_id: UUID) -> dict[str, Any]:
+    def compare_sources(self, **arguments) -> dict[str, Any]:
+        from market_regime_alpha.research_qualification.application.source_comparison import source_comparison
+        if self._source_inputs is None or self._model_predictor is None:
+            raise ValueError("source sensitivity requires the composed Dataset/Model owner inputs")
+        return source_comparison(self._specifications, self._inputs, self.project, self._source_inputs, self._model_predictor, **arguments)
+
+    def project(self, run_id: UUID, *, projection_version: int | None = None) -> dict[str, Any]:
+        if projection_version not in (None, 3):
+            raise ValueError("historical projection supports its original default or explicit version 3")
         report = self._reports.project(run_id)
         spec = self._specifications.load_specification(run_id)
         funnel = self._diagnostics.load(run_id)
@@ -89,5 +104,15 @@ class HistoricalComparisonApplication:
                 "NOT_ACCOUNT_NAV_OR_TRADABLE_ALPHA",
             ),
         }
+        if spec.walk_forward_policy.policy_version == 2 and spec.walk_forward_policy.policy_code == "explicit_calendar_split":
+            from market_regime_alpha.research_qualification.domain.robustness_statistics import robustness_statistics
+            payload["schema"] = "mra-historical-comparison-v2"
+            payload["robustness"] = robustness_statistics(points,
+                arms=tuple((a.exploratory_backtest_arm_id,a.arm_code) for a in spec.arms),sessions=sessions,
+                instruments=tuple(m.instrument_id for m in spec.sample_members),contiguous_folds=self._inputs.contiguous_folds(run_id))
+            payload["fitted_diagnostics"] = self._inputs.fitted_diagnostics(run_id)
         payload["projection_sha256"] = canonical_json_sha256(payload)
+        if projection_version == 3:
+            from market_regime_alpha.research_qualification.domain.historical_ordering import with_independent_ordering
+            return with_independent_ordering(payload)
         return payload

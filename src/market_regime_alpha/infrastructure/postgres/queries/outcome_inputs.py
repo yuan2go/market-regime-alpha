@@ -719,6 +719,7 @@ def _load_sessions(
     ).fetchone()
     if reference is None:
         raise OutcomeInputResolutionError("Decision reference Session is unavailable")
+    retrospective_scope = commitment.exploratory_retrospective_scope
     offsets = tuple(sorted({item.session_offset for item in target.checkpoints}))
     maximum = max(offsets)
     rows = connection.execute(
@@ -732,14 +733,27 @@ def _load_sessions(
           ON capture.capture_id = session.source_capture_id
         WHERE session.exchange = %s
           AND session.session_date > %s
-          AND session.known_at <= %s
+          AND (%s OR session.known_at <= %s)
         ORDER BY session.session_date, session.session_id
         LIMIT %s
         """,
-        (str(reference[0]), reference[1], knowledge_cutoff, maximum),
+        (str(reference[0]), reference[1], retrospective_scope is not None, knowledge_cutoff, maximum),
     ).fetchall()
     if len(rows) < maximum:
         raise OutcomeInputResolutionError("exact future TradingSession roster is incomplete")
+    if retrospective_scope is not None:
+        # Select actual next sessions first: filtering provenance must never
+        # silently advance the Target over an unbound Calendar date. The stored
+        # session snapshot keeps its canonical first-Capture FK unchanged;
+        # its selected Archive provenance is an additional exact scope check.
+        session_ids=[row[0] for row in rows]
+        bound=connection.execute("""
+            SELECT session.session_id FROM mra.trading_session session
+            CROSS JOIN LATERAL mra.exploratory_archive_calendar_capture(session.session_id,%s,%s) binding
+            WHERE session.session_id=ANY(%s::uuid[]) AND binding.foundation_integrity
+            """,(retrospective_scope.market_archive_id,knowledge_cutoff,session_ids)).fetchall()
+        if {row[0] for row in bound}!=set(session_ids):
+            raise OutcomeInputResolutionError("exact future TradingSession roster lacks the selected Archive knowledge binding")
     return tuple(
         OutcomeSessionSource(
             session_id=UUID(str(rows[offset - 1][0])),

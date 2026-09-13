@@ -85,6 +85,40 @@ def start_archive(
     )
 
 
+def observe_recorded_archive_capture(application: TargetApplication, manifest: ArchiveOperatorManifest, *,
+                                     capture_id: UUID, slice_id: UUID, actor_id: str, operation_key: str,
+                                     artifact_root: Path) -> object:
+    """Attach an already captured/normalized retrospective input via its owner.
+
+    This performs no Provider call or normalization and preserves the original
+    request time. Source physical I/O precedes the Archive write transaction.
+    """
+    from market_regime_alpha.infrastructure.artifacts.local import LocalArtifactStore
+    from market_regime_alpha.infrastructure.postgres.repositories.market import PostgresMarketRepository
+    from market_regime_alpha.market.application import RecordArchiveCaptureObservationRequest
+    from market_regime_alpha.runtime.errors import ArtifactIntegrityError
+    if manifest.start_request.lane is not ArchiveLane.RETROSPECTIVE_BACKFILL:
+        raise ValueError("recorded Capture attachment is restricted to retrospective Archive scopes")
+    matches = [item for item in manifest.slices if item.plan.market_archive_slice_id == slice_id]
+    if len(matches) != 1:
+        raise ValueError("recorded Capture requires exactly one frozen Archive slice")
+    selected = matches[0]
+    with application._pool.connection(read_only=True) as connection:
+        source = PostgresMarketRepository(connection).capture_source(capture_id)
+        readable = connection.execute("""SELECT mra.market_artifact_is_readable(artifact.integrity_state,artifact.last_verified_at)
+            FROM mra.data_capture capture JOIN mra.artifact artifact USING(artifact_id) WHERE capture.capture_id=%s""",(capture_id,)).fetchone()
+    if (source.artifact is None or readable is None or not readable[0]
+            or source.capture.status.value != "CAPTURED"
+            or source.capture.provider_product_id != selected.capture_request.provider_product_id
+            or str(source.capture.request_hash) != selected.plan.request_sha256
+            or source.artifact.size_bytes > manifest.start_request.maximum_slice_bytes):
+        raise ArtifactIntegrityError("recorded Capture does not match the frozen Archive slice or physical budget")
+    LocalArtifactStore(artifact_root).read_bytes(str(source.artifact.content_sha256),expected_size=source.artifact.size_bytes)
+    return application.market_archives.record_capture_observation(RecordArchiveCaptureObservationRequest(
+        manifest.start_request.market_archive_id,slice_id,capture_id,selected.schedule_slot,source.capture.temporal.capture_started_at),
+        _context(manifest,actor_id,operation_key))
+
+
 def resume_archive(
     application: TargetApplication,
     manifest: ArchiveOperatorManifest,

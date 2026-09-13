@@ -8,6 +8,7 @@ from uuid import UUID
 from psycopg.rows import dict_row
 
 from market_regime_alpha.infrastructure.postgres.pool import TargetPostgresPool
+from market_regime_alpha.infrastructure.postgres.queries.historical_failures import read_historical_failure_requests
 from market_regime_alpha.research_qualification.ports.artifacts import ResearchArtifactByteStore
 from market_regime_alpha.runtime.errors import ArtifactIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256
@@ -47,19 +48,23 @@ class PostgresHistoricalInventory:
                         WHERE source.instrument_identifier_id=identifier.instrument_identifier_id AND source.capture_id=ANY(%s))
                     ORDER BY instrument_id, identifier_value""",(capture_ids,capture_ids)).fetchall()
                 sessions = cursor.execute("""SELECT DISTINCT session.* FROM mra.market_capture_trading_session_normalization binding
+                    JOIN mra.market_capture_reference_normalization normalized USING(capture_id)
                     JOIN mra.trading_session session USING(session_id) WHERE binding.capture_id=ANY(%s)
-                    ORDER BY exchange,session_date""",(capture_ids,)).fetchall()
+                    AND normalized.recorded_at<=%s AND session.known_at<=%s
+                    ORDER BY exchange,session_date""",(capture_ids,root["knowledge_cutoff"],root["knowledge_cutoff"])).fetchall()
                 bars = cursor.execute("""SELECT bar_revision_id,instrument_id,session_id,timeframe,price_basis,revision,supersedes_revision_id
                     FROM mra.market_bar_revision bar WHERE capture_id=ANY(%s)
                     AND known_at<=%s ORDER BY instrument_id,session_id,timeframe,price_basis,revision""",(capture_ids,root["knowledge_cutoff"])).fetchall()
-                gaps = cursor.execute("""SELECT gap.* FROM mra.source_gap gap WHERE capture_id=ANY(%s)
-                    OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap binding WHERE binding.market_archive_id=%s AND binding.gap_id=gap.gap_id)
-                    ORDER BY gap_id""",(capture_ids,archive_id)).fetchall()
+                gaps = cursor.execute("""SELECT gap.* FROM mra.source_gap gap WHERE (capture_id=ANY(%s)
+                    OR EXISTS (SELECT 1 FROM mra.market_archive_slice_gap binding WHERE binding.market_archive_id=%s AND binding.gap_id=gap.gap_id))
+                    AND gap.known_at<=%s ORDER BY gap_id""",(capture_ids,archive_id,root["knowledge_cutoff"])).fetchall()
                 facts = cursor.execute("""SELECT * FROM mra.instrument_fact_revision WHERE capture_id=ANY(%s) AND fact_kind='LISTING_STATUS'
                     ORDER BY instrument_id,fact_kind,event_start,revision""",(capture_ids,)).fetchall()
                 fact_summary = cursor.execute("""SELECT instrument_id,fact_kind,status_value,count(*) AS count,
                     min(event_start) AS first_event,max(event_start) AS last_event FROM mra.instrument_fact_revision
                     WHERE capture_id=ANY(%s) GROUP BY instrument_id,fact_kind,status_value ORDER BY instrument_id,fact_kind,status_value""",(capture_ids,)).fetchall()
+            failed_requests = read_historical_failure_requests(connection, archive_id, root["knowledge_cutoff"],
+                tuple(g["gap_id"] for g in gaps if g["fact_kind"] == "DATA_CAPTURE" and g["gap_kind"] == "PROVIDER_FAILURE"))
             fact_digest = sha256()
             fact_count = 0
             # Server cursor bounds transport and memory; only immutable identity
@@ -71,14 +76,50 @@ class PostgresHistoricalInventory:
                     fact_count += 1
         if config is None or not config["readable"]:
             raise ArtifactIntegrityError("historical inventory config is not readable")
-        frozen = json.loads(self._bytes.read_bytes(config["content_sha256"],expected_size=config["size_bytes"]))
-        if frozen.get("schema") != "mra-historical-acquisition-freeze-v1":
+        config_bytes=self._bytes.read_bytes(config["content_sha256"],expected_size=config["size_bytes"])
+        frozen = json.loads(config_bytes)
+        recorded = frozen.get("schema") == "mra-recorded-archive-scope-v1"
+        if recorded:
+            from datetime import datetime
+            from market_regime_alpha.market.domain.professional_normalization import verify_recorded_archive_scope
+            frozen=verify_recorded_archive_scope(config_bytes)
+            exact={c["capture_id"]:c for c in captures}
+            if set(exact)!={UUID(c["capture_id"]) for c in frozen["captures"]}:
+                raise ArtifactIntegrityError("recorded inventory Capture roster differs from frozen inputs")
+            for item in frozen["captures"]:
+                capture=exact[UUID(item["capture_id"])]
+                if (capture["request_hash"]!=item["request_sha256"] or capture["content_sha256"]!=item["artifact_sha256"]
+                        or capture["size_bytes"]!=item["artifact_size_bytes"] or capture["known_at"]!=datetime.fromisoformat(item["known_at"])):
+                    raise ArtifactIntegrityError("recorded inventory Capture request/bytes/knowledge binding differs")
+            with self._pool.connection(read_only=True) as connection,connection.cursor(row_factory=dict_row) as cursor:
+                securities=cursor.execute("""SELECT DISTINCT instrument.instrument_id,instrument.canonical_code,instrument.exchange
+                    FROM mra.market_capture_instrument_normalization binding JOIN mra.instrument instrument USING(instrument_id)
+                    WHERE binding.capture_id=ANY(%s) ORDER BY instrument.instrument_id""",(capture_ids,)).fetchall()
+                terminal_gap=cursor.execute("SELECT gap_count FROM mra.market_archive_seal WHERE market_archive_seal_id=%s",(seal_id,)).fetchone()
+                if terminal_gap is None:
+                    raise ArtifactIntegrityError("recorded inventory lost its original seal")
+                request_gap_count=terminal_gap['gap_count']
+        elif frozen.get("schema") != "mra-historical-acquisition-freeze-v1":
             raise ValueError("history-inventory requires the explicit historical acquisition contract")
         roster_hash = canonical_json_sha256({"securities":frozen["securities"],"price_inventory":frozen["price_inventory"],"limitation":frozen["universe"]})
         if roster_hash != root["instrument_scope_sha256"]:
             raise ArtifactIntegrityError("historical inventory frozen scope hash mismatch")
-        observed = {s["instrument_id"]:s for s in securities}
         frozen_ids = [UUID(item[1]) for item in frozen["securities"]]
+        archive_bar_count,archive_quality_gap_count=len(bars),sum(g['fact_kind']!='DATA_CAPTURE' for g in gaps)
+        if recorded:
+            from datetime import date
+            start,end=(date.fromisoformat(frozen['source_contract'][key]) for key in ('start_date','end_date'))
+            # Reference Captures may cover more dates/names than this recording.
+            # Keep their exact full physical identities, but score only this scope.
+            securities=[row for row in securities if row['instrument_id'] in frozen_ids]
+            sessions=[row for row in sessions if start<=row['session_date']<=end]
+            selected_sessions={row['session_id'] for row in sessions}
+            bars=[row for row in bars if row['instrument_id'] in frozen_ids and row['session_id'] in selected_sessions
+                and row['timeframe']=='DAILY' and row['price_basis']=='RAW_UNADJUSTED']
+            gaps=[row for row in gaps if row['fact_kind']=='DATA_CAPTURE' or (
+                row['instrument_id'] in frozen_ids and row['session_id'] in selected_sessions
+                and row['timeframe']=='DAILY' and row['price_basis']=='RAW_UNADJUSTED')]
+        observed = {s["instrument_id"]:s for s in securities}
         if not set(observed).issubset(frozen_ids):
             raise ArtifactIntegrityError("historical acquisition observed an unplanned instrument")
         with self._pool.connection(read_only=True) as connection:
@@ -86,6 +127,9 @@ class PostgresHistoricalInventory:
         original_by_id = {r[0]:r for r in original}
         if set(original_by_id) != set(frozen_ids):
             raise ArtifactIntegrityError("frozen historical population lost its original instrument identities")
+        if recorded and any(original_by_id[UUID(identity)][1] != identifier[:6]+'.'+{'SH':'XSHG','SZ':'XSHE'}[identifier[-2:]]
+                for identifier,identity in frozen['securities']):
+            raise ArtifactIntegrityError("recorded inventory stock code differs from original canonical instrument")
         securities = [{"instrument_id":UUID(identity),"canonical_code":original_by_id[UUID(identity)][1],
             "exchange":original_by_id[UUID(identity)][2],"identifier_value":identifier,
             "archive_security_master_observed":UUID(identity) in observed} for identifier,identity in frozen["securities"]]
@@ -98,8 +142,17 @@ class PostgresHistoricalInventory:
             if bar["timeframe"] == "DAILY":
                 by_bar[(bar["instrument_id"],bar["session_id"],bar["price_basis"])].append(bar)
         by_gap = defaultdict(list)
+        exchange_by_instrument = {s["instrument_id"]:s["exchange"] for s in securities}
         for gap in gaps:
             by_gap[(gap["instrument_id"],gap["session_id"],gap["price_basis"])].append(gap)
+            request = failed_requests.get(gap["gap_id"])
+            if request is not None:
+                # The request's inclusive civil-date bounds select only observed
+                # Archive sessions. This is failure attribution, never new facts.
+                for session in sessions:
+                    if (session["exchange"] == exchange_by_instrument.get(request.instrument_id)
+                            and request.window_start.date() <= session["session_date"] <= request.window_end.date()):
+                        by_gap[(request.instrument_id,session["session_id"],request.price_basis)].append(gap)
         # The frozen static roster is the denominator, including pre-listing days.
         inventory, exclusions = [], []
         for security in securities:
@@ -107,7 +160,7 @@ class PostgresHistoricalInventory:
             for session in sessions:
                 if session["exchange"] != security["exchange"]:
                     continue
-                for basis in ("RAW_UNADJUSTED","BACKWARD_ADJUSTED"):
+                for basis in (("RAW_UNADJUSTED",) if recorded else ("RAW_UNADJUSTED","BACKWARD_ADJUSTED")):
                     key = (security["instrument_id"],session["session_id"],basis)
                     revisions = by_bar[key]
                     heads = [b for b in revisions if not any(s["supersedes_revision_id"]==b["bar_revision_id"] for s in revisions)]
@@ -120,7 +173,7 @@ class PostgresHistoricalInventory:
                             "bar_revision_ids":[b["bar_revision_id"] for b in revisions],
                             "gaps":[{"gap_id":g["gap_id"],"kind":g["gap_kind"],"reason":g["reason_code"]} for g in missing]})
             inventory.append({**security,"counts":[{"price_basis":k[0],"state":k[1],"count":v} for k,v in sorted(counts.items())]})
-        return {"schema":"mra-historical-inventory-v2","archive":root,"captures":captures,"securities":inventory,
+        result = {"schema":"mra-historical-inventory-v2","archive":root,"captures":captures,"securities":inventory,
             "calendar":sessions,"bar_revision_count":len(bars),"bar_revision_roster_sha256":sha256(b"".join(sorted(b["bar_revision_id"].bytes for b in bars))).hexdigest(),
             "roster_hash_algorithm":"SHA256_SORTED_UUID_BYTES_V1","instrument_fact_count":fact_count,
             "instrument_fact_roster_sha256":fact_digest.hexdigest(),"instrument_fact_summary":fact_summary,
@@ -131,6 +184,16 @@ class PostgresHistoricalInventory:
             "limitations":["STATIC_UNIVERSE","SURVIVORSHIP_LIMITED","EXPLORATORY_RETROSPECTIVE_NOT_FORMAL_PIT",
                 "CALENDAR_AND_BAR_COVERAGE_DO_NOT_ESTABLISH_FEATURE_OR_LABEL_READINESS"],
             "database_bytes":self._database_bytes(),"physically_verified_capture_count":len(captures)}
+        if recorded:
+            result['schema']='mra-historical-inventory-v3'
+            result['frozen_source_scope']=result.pop('frozen_acquisition')
+            result['declared_price_bases']=['RAW_UNADJUSTED']
+            result['provider_identifier_scheme']='XTQUANT_STOCK_CODE'
+            result['request_terminal_gap_count']=request_gap_count
+            result['normalized_quality_gap_count']=sum(g['fact_kind']!='DATA_CAPTURE' for g in gaps)
+            result['archive_capture_bar_revision_count']=archive_bar_count
+            result['archive_capture_quality_gap_count']=archive_quality_gap_count
+        return result
 
     def _database_bytes(self) -> int:
         with self._pool.connection(read_only=True) as connection:

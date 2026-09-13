@@ -24,6 +24,8 @@ from market_regime_alpha.interfaces.historical_study_build import verify_histori
 from market_regime_alpha.interfaces.historical_feature_definitions import historical_feature_definitions
 from market_regime_alpha.research_qualification.domain.historical_features import FACTORS_BY_CODE
 from market_regime_alpha.research_qualification.domain.historical_matrix import HistoricalMatrixPlan, HistoricalTimeSplit
+from market_regime_alpha.research_qualification.domain.historical_rolling import HistoricalRollingPlan
+from market_regime_alpha.research_qualification.domain.research_intercept import intercept_feature_definition, INTERCEPT_CODE
 from market_regime_alpha.research_qualification.domain import backtest as B, research_models as M, research_vocabulary as V
 from market_regime_alpha.research_qualification.domain.daily_protocol import daily_feature_definition, daily_target_definition
 from market_regime_alpha.research_qualification.domain.historical_study import HistoricalStudyPlan
@@ -53,24 +55,35 @@ def _exact(path: Path, content: bytes) -> None:
 
 def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: Path,
                   lockfile: Path, source_checkout: Path, code_sha: str, output: Path, actor_id: str,
-                  matrix: HistoricalMatrixPlan | None = None, reuse_contracts_from: UUID | None = None) -> dict[str, Any]:
+                  matrix: HistoricalMatrixPlan | HistoricalRollingPlan | None = None, reuse_contracts_from: UUID | None = None,
+                  source_contracts_from: UUID | None = None) -> dict[str, Any]:
     """Owner declarations and a frozen portable specification, resumable by ID."""
     if not output.is_dir():
         raise ValueError("study output must be an existing persistent directory")
     build = verify_historical_build(wheel=wheel, lockfile=lockfile, source_checkout=source_checkout, code_sha=code_sha)
     if matrix is not None and matrix.baseline!=plan:
         raise ValueError("historical matrix baseline identity mismatch")
+    rolling = isinstance(matrix, HistoricalRollingPlan)
+    if source_contracts_from is not None and (reuse_contracts_from is not None or not rolling):
+        raise ValueError("source contrast requires rolling v2 and cannot reuse a holdout declaration")
     splits = ((HistoricalTimeSplit(plan.fit_dates,plan.purge_dates,plan.embargo_dates,plan.validation_dates),) if matrix is None else matrix.splits)
-    evidence = read_study_dependencies(app._pool, plan, () if matrix is None else matrix.additional_splits, None if matrix is None else matrix.step_sessions)
+    evidence = read_study_dependencies(app._pool, plan, () if matrix is None else matrix.additional_splits, None if matrix is None else matrix.step_sessions,
+        stride_anchor="VALIDATION_START" if rolling else "FIT_START")
     reused = None
-    if reuse_contracts_from is not None:
+    reuse_identity = reuse_contracts_from if source_contracts_from is None else source_contracts_from
+    if reuse_identity is not None:
         from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import load_parser_feature_definitions
         from market_regime_alpha.infrastructure.postgres.repositories.target_definitions import PostgresTargetDefinitionRepository
         from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import _load_strategy
         from market_regime_alpha.infrastructure.postgres.repositories.selection import PostgresSelectionRepository
         from market_regime_alpha.infrastructure.postgres.repositories.candidate import PostgresCandidateRepository
-        reused = app.backtest_specifications.load_specification(reuse_contracts_from)
-        if matrix is None or reused.market_archive.authority_id != plan.market_archive_id or reused.market_archive_seal.authority_id != plan.market_archive_seal_id:
+        reused = app.backtest_specifications.load_specification(reuse_identity)
+        if source_contracts_from is not None and (reused.walk_forward_policy.policy_code != "explicit_calendar_split"
+                or reused.walk_forward_policy.policy_version != 2
+                or tuple(m.instrument_id for m in reused.sample_members) != plan.instrument_ids
+                or (reused.market_archive.authority_id,reused.market_archive_seal.authority_id) == (plan.market_archive_id,plan.market_archive_seal_id)):
+            raise ValueError("source contrast needs a distinct sealed source and the exact original rolling population")
+        if source_contracts_from is None and (matrix is None or reused.market_archive.authority_id != plan.market_archive_id or reused.market_archive_seal.authority_id != plan.market_archive_seal_id):
             raise ValueError("heldout contract reuse requires an expanded matrix over the exact original sealed Archive")
         with app._pool.connection(read_only=True) as connection:
             reused_target = PostgresTargetDefinitionRepository(connection).target_definition(reused.target.authority_id, lock=False)
@@ -87,8 +100,16 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
               "economics": "NOT_ESTIMABLE_NON_TRADABLE_PREDICTION_DIAGNOSTIC"}
     if matrix is not None:
         frozen["ridge_alpha"]="BASELINE_1_EXPANDED_PER_CANDIDATE"
+    if rolling:
+        frozen["schema"] = "mra-historical-rolling-freeze-v2"
+        frozen["constant_inputs"] = "EXACT_LISTING_FACT_INTERCEPT_NO_PRICE_DEPENDENCY"
+        frozen["partition_coverage"] = evidence["partition_coverage"]
+    if source_contracts_from is not None:
+        frozen["schema"] = "mra-source-contrast-freeze-v1"
+        frozen["source_contrast"] = "EXACT_TARGET_FEATURE_PROTOCOL_REUSE_NEW_SOURCE_NEW_TRAINING_NOT_FRESH_HOLDOUT"
     if reused is not None:
-        frozen["reuse_contracts_from"] = {"run_id": reused.exploratory_backtest_run_id, "specification_sha256": str(reused.content_sha256)}
+        frozen["reuse_contracts_from" if source_contracts_from is None else "source_contracts_from"] = {
+            "run_id": reused.exploratory_backtest_run_id, "specification_sha256": str(reused.content_sha256)}
     content = _json(frozen)
     _exact(output / "frozen-study.json", content)
     provenance = sha256(content).hexdigest()
@@ -106,6 +127,10 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     feature = replace(daily_feature_definition(uid("feature"), code, config), feature_code=plan.study_code + "_session_move")
     expanded_features = () if matrix is None else tuple(replace(f,feature_code=plan.study_code+"_"+f.algorithm_code)
         for f in historical_feature_definitions(uid("historical-features"),code,config))
+    required_factor_names = set() if matrix is None else {n for c in matrix.ridge_candidates for n in c.feature_names}
+    if rolling:
+        expanded_features = tuple(f for f in expanded_features if FACTORS_BY_CODE[f.algorithm_code].name in required_factor_names)
+    intercept = replace(intercept_feature_definition(uid("intercept"), code, config), feature_code=plan.study_code+"_intercept") if rolling else None
     if reused is not None:
         target = reused_target
         originals = tuple(f for f in reused_features if f.algorithm_code == "session_open_close_move_v1")
@@ -113,10 +138,14 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             raise ValueError("reused baseline Feature identity is ambiguous")
         feature = originals[0]
         expanded_features = tuple(f for f in reused_features if f.algorithm_code in FACTORS_BY_CODE)
-        if len(expanded_features) != len(FACTORS_BY_CODE):
+        if rolling:
+            intercept = next((f for f in reused_features if f.algorithm_code == INTERCEPT_CODE), None)
+            if intercept is None or not required_factor_names <= {FACTORS_BY_CODE[f.algorithm_code].name for f in expanded_features}:
+                raise ValueError("reused rolling control/factor roster differs from the frozen hypothesis")
+        elif len(expanded_features) != len(FACTORS_BY_CODE):
             raise ValueError("reused expanded Feature roster is incomplete")
     feature_by_name = {FACTORS_BY_CODE[f.algorithm_code].name:f for f in expanded_features}
-    features = tuple(sorted((feature,*expanded_features),key=lambda f:str(f.feature_definition_id)))
+    features = tuple(sorted((feature,*expanded_features,*(() if intercept is None else (intercept,))),key=lambda f:str(f.feature_definition_id)))
     universe = UniverseDefinition(uid("universe"), plan.study_code + "_universe", plan.universe_limitation)
     product_id = evidence["archive"]["provider_product_id"]
     eligibility = EligibilityPolicy(uid("eligibility"), product_id, plan.study_code + "_eligible", 1, (
@@ -126,9 +155,10 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             "SECURITY_STATUS", "POINT", 1, "SESSION", CriterionValueKind.STATUS, CriterionOperator.EQ, "STATUS", threshold_status="ACTIVE")))
     def candidate_artifact(binding: ArtifactBinding) -> CandidateArtifactBinding:
         return CandidateArtifactBinding(binding.artifact_id, str(binding.content_sha256), binding.size_bytes)
+    candidate_feature = feature if intercept is None else intercept
     candidate = CandidatePolicy(uid("candidate"), plan.study_code + "_rank", 1, candidate_artifact(code), candidate_artifact(config), len(plan.instrument_ids), (
-        CandidatePolicyComponent(uid("component"), uid("candidate"), "session_move", 1, feature.feature_definition_id,
-            feature.content_sha256, CandidateFeatureValueType.DECIMAL, DesirabilityDirection.HIGHER_IS_BETTER, D(1)),))
+        CandidatePolicyComponent(uid("component"), uid("candidate"), "session_move" if intercept is None else "eligible_intercept", 1, candidate_feature.feature_definition_id,
+            candidate_feature.content_sha256, CandidateFeatureValueType.DECIMAL, DesirabilityDirection.HIGHER_IS_BETTER, D(1)),))
     old = evidence["strategy"]
     sid = uid("strategy_version")
     strategy = replace(old, strategy=StrategyPlan(uid("strategy"), plan.study_code + "_rule", "Frozen midrank affine comparator; exploratory predictions only"),
@@ -145,7 +175,13 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     if reused is not None:
         strategy = reused_strategy
         sid = strategy.strategy_version_id
-        eligibility, candidate = reused_eligibility, reused_candidate
+        candidate = reused_candidate
+        if source_contracts_from is None:
+            eligibility = reused_eligibility
+        else:
+            eligibility = replace(reused_eligibility,eligibility_policy_id=uid("eligibility"),
+                policy_code=plan.study_code+"_source_eligible",market_provider_product_id=product_id,
+                rules=tuple(replace(rule,eligibility_rule_id=uid("source-rule:"+str(rule.ordinal))) for rule in reused_eligibility.rules))
     fit = prediction_protocol(uid("fit_protocol"), plan.study_code + "_fit", V.PartitionPurpose.FIT, target, code, config, provenance)
     validation = prediction_protocol(uid("validation_protocol"), plan.study_code + "_validation", V.PartitionPurpose.VALIDATION, target, code, config, provenance)
     if reused is None:
@@ -153,6 +189,8 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
         for registered in features:
             app.research_definitions.register_feature_definition(registered,ctx("register:feature" if registered is feature else "register:feature:"+registered.algorithm_code))
     app.selection.register_universe(universe, ctx("register:universe"))
+    if source_contracts_from is not None:
+        app.selection.register_eligibility_policy(eligibility,ctx("register:source-eligibility"))
     if reused is None:
         app.selection.register_eligibility_policy(eligibility, ctx("register:eligibility"))
         app.candidates.register_candidate_policy(candidate, ctx("register:candidate"))
@@ -202,6 +240,8 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
         if name != "rule":
             expanded = expanded_candidates.get(name)
             model_features = (feature,) if expanded is None else tuple(feature_by_name[n] for n in expanded.feature_names)
+            if intercept is not None and name in {"zero", "training_mean", "training_median"}:
+                model_features = (intercept,)
             model = M.ResearchModelPlan(uid("model:" + name), plan.study_code + "_" + name, target.target_definition_id, 1, target.content_sha256,
                 tuple((f.feature_definition_id,str(f.content_sha256)) for f in model_features), code, config, provenance)
             app.research_models.register_model(model, ctx("model:" + name))
@@ -209,14 +249,14 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
             ridge = name in {"ridge_v1", "ridge_v2"} or expanded is not None
             parameters = ((M.ModelScalarParameter(1, "ridge_alpha", M.ModelScalarType.DECIMAL, decimal_value=D(1) if expanded is None else expanded.ridge_alpha),) if ridge else
                 (M.ModelScalarParameter(1, "baseline_kind", M.ModelScalarType.TEXT, text_value=name.upper()),))
-            recipe = B.BacktestModelTrainingRecipe("deterministic_ridge" if ridge else "research_baseline", "2.0.0" if name == "ridge_v2" or expanded is not None else "1.0.0",
+            recipe = B.BacktestModelTrainingRecipe("deterministic_ridge" if ridge else "research_baseline", "2.0.0" if name in {"ridge_v2", "training_median"} or expanded is not None else "1.0.0",
                 build.ridge_sha256 if ridge else build.baseline_sha256, environment, parameters)
             for split_index in range(len(splits)):
                 training.append(B.BacktestModelTrainingRequirement(uid("training:"+name+("" if matrix is None else ":"+str(split_index+1))),len(training)+1,uid("arm:"+name),
                     folds[2*split_index].exploratory_backtest_fold_id,folds[2*split_index+1].exploratory_backtest_fold_id,model_binding,
                     (binding(fit.metrics[0].evaluation_protocol_metric_id,fit.metrics[0].content_sha256) if reused is None else reused.model_training_requirements[0].training_metric),split_index+1,recipe))
         arms.append(B.BacktestArmSpecification(uid("arm:" + name), ordinal, name, B.BacktestExecutionKind.RULE if name == "rule" else B.BacktestExecutionKind.MODEL,
-            B.BacktestComparisonRole.BASELINE if name == "rule" else B.BacktestComparisonRole.CHALLENGER, B.BacktestContextMode.OBSERVATIONAL,
+            B.BacktestComparisonRole.BASELINE if name == ("zero" if rolling else "rule") else B.BacktestComparisonRole.CHALLENGER, B.BacktestContextMode.OBSERVATIONAL,
             defaults.candidate, defaults.context, defaults.strategy, model_binding, defaults.portfolio, defaults.risk, cost_hash))
     evaluations = [B.BacktestEvaluationRequirement(uid(f"evaluation:{f.ordinal}:{a.ordinal}"), i, f.exploratory_backtest_fold_id,
         f.evaluation_protocol, True, arm_id=a.exploratory_backtest_arm_id)
@@ -233,7 +273,9 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
         defaults, tuple(arms), folds, tuple(B.BacktestFoldDependency(uid("dependency"+("" if matrix is None else ":"+str(i+1))),i+1,
             folds[2*i].exploratory_backtest_fold_id,folds[2*i+1].exploratory_backtest_fold_id) for i in range(len(splits))),
         tuple(B.BacktestArmFold(uid(f"arm_fold:{f.ordinal}:{a.ordinal}"), i, a.exploratory_backtest_arm_id, f.exploratory_backtest_fold_id) for i, (f, a) in enumerate(((f, a) for f in folds for a in arms), 1)),
-        tuple(training), B.BacktestWalkForwardPolicy("explicit_calendar_split", 1, B.BacktestWalkForwardMode.FIXED if matrix is None else B.BacktestWalkForwardMode.ROLLING, len(plan.fit_dates), len(plan.validation_dates), len(plan.validation_dates) if matrix is None else matrix.step_sessions),
+        tuple(training), B.BacktestWalkForwardPolicy("explicit_calendar_split", 2 if rolling else 1,
+            B.BacktestWalkForwardMode(matrix.mode) if isinstance(matrix, HistoricalRollingPlan) else (B.BacktestWalkForwardMode.FIXED if matrix is None else B.BacktestWalkForwardMode.ROLLING),
+            len(plan.fit_dates), len(plan.validation_dates), len(plan.validation_dates) if matrix is None else matrix.step_sessions),
         (cost,), tuple(evaluations), plan.seed, code, config, provenance,
         specification_schema_version=1 if matrix is None else 2)
     _exact(output / "backtest-specification.json", encode_backtest_specification(spec))
