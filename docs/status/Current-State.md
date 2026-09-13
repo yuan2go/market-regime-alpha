@@ -54,6 +54,14 @@ unopened. The former has started through the independently installed frozen
 wheel, with bounded drain and original-plan resume; action counts are engineering
 progress, not independent statistical observations.
 
+The same-model lineage reader now decodes both registered baseline formats;
+its former version-1-only branch rejected the new median control. The real,
+already accessed five-model pilot confirms the correction through PostgreSQL
+read-only transactions, without retraining or rewriting fitted bytes. Lineage
+also reports original FIT decision/label time bounds by sample state and reason,
+retaining exclusions separately from estimable training rows. Installed CLI
+verification of this correction follows the authorized research schema upgrade.
+
 An evidenced professional recording can now embed its mapping in Capture
 v3 and normalize RAW daily bars through the original Market owner. The local
 recorded PostgreSQL chain reaches Dataset, five fitted models, Outcome, Evaluation

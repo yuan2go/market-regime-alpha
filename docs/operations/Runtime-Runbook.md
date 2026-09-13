@@ -431,6 +431,13 @@ mra research daily replay --plan "$ORIGINAL_PUBLISHED_PLAN"
 mra research validity daily --protocol-version 3
 ```
 
+`lineage` reloads the exact ModelVersion and its original TrainingRun, including
+baseline artifact versions 1 and 2. It reports FIT decision/label cutoff bounds
+by sample state and reason; these are event bounds, separate from actual training
+knowledge and execution times. Cross-version artifact identities fail closed.
+A historical candidate's `NO_EXPERIMENTAL_MODEL_USE` describes its isolation;
+it does not require automatic online registration.
+
 Continue an Outcome cursor with all three returned fields:
 `--after-priority`, `--after-requested-at`, `--after-run-id`. Delivery cursors
 use only the latter two. Cursors are opaque scan positions; no saved cursor
