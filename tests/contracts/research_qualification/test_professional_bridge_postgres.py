@@ -325,4 +325,3 @@ def _compare_second_recorded_source(app,settings,run_id,p,plan,catalog,source_in
         app.historical_comparison.compare_sources(**{**arguments,'right_arm':'zero'},mode='FIXED_PROTOCOL_RETRAIN')
     with app._pool.connection(read_only=True) as connection:
         assert _historical_projection(connection,manifest=before_comparison.manifest).sha256==before_comparison.sha256
-
