@@ -62,6 +62,7 @@ def add_historical_parser(commands) -> None:
     comparison.add_argument("--run-id",required=True,type=UUID)
     comparison.add_argument("--expected-database-name",required=True)
     comparison.add_argument("--expected-database-oid",required=True,type=int)
+    comparison.add_argument("--projection-version",type=int,choices=(3,),help="Opt in to independent IC summaries; omission preserves original v1/v2 projection bytes")
     comparison.add_argument("--publish",action="store_true")
     comparison.add_argument("--actor-id",default="historical-research-operator")
     inventory = commands.add_parser("history-inventory")
@@ -135,7 +136,8 @@ def execute_research(settings: TargetSettings, arguments: argparse.Namespace) ->
             return app.historical_comparison.compare_sources(left_run_id=arguments.left_run_id,right_run_id=arguments.right_run_id,
                 left_arm=arguments.left_arm,right_arm=arguments.right_arm,start_date=arguments.start_date,end_date=arguments.end_date,mode=arguments.mode)
         if arguments.research_command=="history-compare":
-            payload=app.historical_comparison.project(arguments.run_id)
+            payload=(app.historical_comparison.project(arguments.run_id) if arguments.projection_version is None else
+                app.historical_comparison.project(arguments.run_id,projection_version=arguments.projection_version))
             if arguments.publish:
                 from market_regime_alpha.interfaces.historical_study import _json
                 from market_regime_alpha.runtime.application import CommandContext, ActorType

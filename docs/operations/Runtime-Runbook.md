@@ -108,6 +108,19 @@ otherwise the report is descriptive. Empty completed populations remain visible.
 original Artifact owner with a content-bound idempotency key. This projection
 does not create new Outcome labels, Evaluation metrics or model qualification.
 
+For rolling v2 studies, opt in to `history-compare --projection-version 3` to
+include independent IC summaries on own, all-arm-common and primary pair
+populations, with fold/month/year slices. The original paired IC field requires
+both rankings and can therefore be unavailable against ZERO even when the
+model's rank is estimable. V3 retains that field and its paired uncertainty,
+while separately exposing each side's original daily IC. A constant still has
+no IC and no paired IC difference. Omitting the option preserves the original
+v1/v2 output; no selection or holdout rule changes. V3 requires a reconciled
+rolling v2 owner projection and binds its original projection hash. Its new
+projection and optional published Artifact have distinct identities; file SHA,
+Artifact content SHA and projection SHA are separate checks. Other projection
+version arguments, non-rolling inputs and invalid prior hashes are rejected.
+
 The registered `backtest_exploratory_holdout_v12` upgrade adds two append-only
 Backtest facts: a reservation and one opening. Use an exact research backup and
 the existing upgrade plan/apply commands. Drain an older installed executor

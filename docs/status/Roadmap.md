@@ -53,6 +53,9 @@ versioned research declarations. Old protocols, SQL and results retain their byt
   five-session blocks within contiguous fold intervals, seed 18, 1,000 draws;
   never join gaps or count names as independent dates. Report descriptive
   multiple-comparison limits and unavailable economic execution/account evidence.
+  Explicit projection v3 also exposes independent model IC when a constant
+  reference cannot supply a paired rank; original v1/v2 bytes and paired
+  intervals remain unchanged, with real pilot and independent rank checks.
 - [x] Bridge evidenced professional recording semantics through existing Capture
   and Market normalization to the same Dataset/model/Outcome consumers. Preserve
   unknown mappings as refusals. Test a local substitute when no authorized real

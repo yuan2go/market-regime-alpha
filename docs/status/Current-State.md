@@ -62,6 +62,18 @@ also reports original FIT decision/label time bounds by sample state and reason,
 retaining exclusions separately from estimable training rows. Installed CLI
 verification of this correction follows the authorized research schema upgrade.
 
+An explicit `history-compare --projection-version 3` now adds independent daily
+IC summaries for each arm's own/common populations and each primary pair. The
+original paired summary requires both model and reference ranks, so a constant
+ZERO reference left its paired model mean unavailable even when the model's daily
+values existed. V3 exposes those original values independently; constant IC and
+paired differences against constants remain NOT_ESTIMABLE. Default v1/v2 output,
+selection rules and original projection hashes retain their meaning. The already
+accessed real five-arm pilot reproduces its original v2 projection hash and passes
+independent tied-rank calculations over all 58 common observations; its original
+file bytes remain unchanged. These two dates are engineering consumer evidence,
+not new long-window validation.
+
 An evidenced professional recording can now embed its mapping in Capture
 v3 and normalize RAW daily bars through the original Market owner. The local
 recorded PostgreSQL chain reaches Dataset, five fitted models, Outcome, Evaluation

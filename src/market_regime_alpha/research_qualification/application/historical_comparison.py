@@ -49,7 +49,9 @@ class HistoricalComparisonApplication:
             raise ValueError("source sensitivity requires the composed Dataset/Model owner inputs")
         return source_comparison(self._specifications, self._inputs, self.project, self._source_inputs, self._model_predictor, **arguments)
 
-    def project(self, run_id: UUID) -> dict[str, Any]:
+    def project(self, run_id: UUID, *, projection_version: int | None = None) -> dict[str, Any]:
+        if projection_version not in (None, 3):
+            raise ValueError("historical projection supports its original default or explicit version 3")
         report = self._reports.project(run_id)
         spec = self._specifications.load_specification(run_id)
         funnel = self._diagnostics.load(run_id)
@@ -110,4 +112,7 @@ class HistoricalComparisonApplication:
                 instruments=tuple(m.instrument_id for m in spec.sample_members),contiguous_folds=self._inputs.contiguous_folds(run_id))
             payload["fitted_diagnostics"] = self._inputs.fitted_diagnostics(run_id)
         payload["projection_sha256"] = canonical_json_sha256(payload)
+        if projection_version == 3:
+            from market_regime_alpha.research_qualification.domain.historical_ordering import with_independent_ordering
+            return with_independent_ordering(payload)
         return payload
