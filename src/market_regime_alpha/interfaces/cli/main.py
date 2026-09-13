@@ -20,6 +20,7 @@ from uuid import UUID
 import psycopg
 
 from market_regime_alpha.bootstrap import (
+    database_identity,
     TargetSettings,
     apply_operational_database_upgrade,
     apply_database_recreate,
@@ -351,6 +352,7 @@ def main(
 def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object:
     if arguments.area == "research":
         if arguments.research_command in {"prepare-historical", "prepare-history-data", "history-inventory", "history-compare", "provider-recording-check", "provider-recording-replay",
+                "provider-recording-normalize", "source-compare", "prepare-recorded-archive",
                 "holdout-reserve", "holdout-select", "holdout-open", "holdout-inspect"}:
             from market_regime_alpha.interfaces.cli.research import execute_research
             return execute_research(settings, arguments)
@@ -515,7 +517,7 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                 and arguments.prospective_command in {"continue", "predeclare", "run-due", "resume"}):
             raise ValueError("OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED: use mra archive prospective serve with --operation-config")
         manifest = None
-        if arguments.archive_command in {"start", "resume", "retry"}:
+        if arguments.archive_command in {"start", "resume", "retry", "observe-recorded"}:
             manifest = load_archive_manifest(arguments.manifest)
             if manifest.start_request.lane is ArchiveLane.PROSPECTIVE_CONTEMPORANEOUS:
                 raise ValueError("OPERATION_GUARDED_PROSPECTIVE_ENTRY_REQUIRED: use mra archive prospective serve with --operation-config")
@@ -530,6 +532,8 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
             settings,
             expected_database_name=arguments.expected_database_name,
         )
+        if arguments.archive_command == "observe-recorded" and database_identity(settings).database_oid != arguments.expected_database_oid:
+            raise ValueError("recorded Archive database OID differs from operator intent")
         with bootstrap_application(settings) as application:
             if arguments.archive_command == "prospective":
                 command = arguments.prospective_command
@@ -562,6 +566,10 @@ def _dispatch(arguments: argparse.Namespace, settings: TargetSettings) -> object
                     context=CommandContext(actor_id=arguments.actor_id, actor_type=ActorType.OPERATOR,
                         idempotency_key=arguments.operation_key, reason_code="HISTORICAL_ARCHIVE_SEAL"))
             assert manifest is not None
+            if arguments.archive_command == "observe-recorded":
+                from market_regime_alpha.interfaces.archive import observe_recorded_archive_capture
+                return observe_recorded_archive_capture(application,manifest,capture_id=arguments.capture_id,slice_id=arguments.slice_id,
+                    actor_id=arguments.actor_id,operation_key=arguments.operation_key,artifact_root=settings.artifact_root)
             if arguments.archive_command == "start":
                 return start_archive(
                     application,
@@ -767,6 +775,14 @@ def _parser() -> argparse.ArgumentParser:
             mutation.add_argument("--slice-id", action="append", type=UUID)
             mutation.add_argument("--maximum-slices", type=int)
             mutation.add_argument("--maximum-seconds", type=float)
+    recorded = archive_commands.add_parser("observe-recorded")
+    recorded.add_argument("--manifest",required=True,type=Path)
+    recorded.add_argument("--slice-id",required=True,type=UUID)
+    recorded.add_argument("--capture-id",required=True,type=UUID)
+    recorded.add_argument("--expected-database-name",required=True)
+    recorded.add_argument("--expected-database-oid",required=True,type=int)
+    recorded.add_argument("--actor-id",required=True)
+    recorded.add_argument("--operation-key",required=True)
     for command in (
         "inspect", "gap-report", "revision-report", "daily-health", "acquisition-readiness",
     ):

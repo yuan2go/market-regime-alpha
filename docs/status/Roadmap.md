@@ -38,7 +38,7 @@ versioned research declarations. Old protocols, SQL and results retain their byt
   FIT may overlap only under a frozen mature-label update rule; validation
   scoring dates cannot repeat. Old protected holdout labels remain excluded
   unless an explicit owner usage contract is independently implemented.
-- [ ] Resolve exact dates from Archive Calendar and prior access facts. Target
+- [x] Resolve exact dates from Archive Calendar and prior access facts. Target
   at least 120 distinct development target dates across twelve months/two years
   plus at least 50 subsequent, unused heldout target dates. Freeze exact candidates,
   dates, exclusions, selection/access rules and measured action/time/storage budget
@@ -46,14 +46,14 @@ versioned research declarations. Old protocols, SQL and results retain their byt
 - [ ] Execute the frozen plan with the canonical bounded run/resume chain and
   fresh per-fold models. Retain failures and prove interruption recovery and
   zero repeated completed actions; reconcile reports and physical lineage.
-- [ ] Extend reconciled comparison to primary paired MAE and daily Rank IC
+- [x] Extend reconciled comparison to primary paired MAE and daily Rank IC
   differences, own/core-pair/all-arm samples, fold/month/year results, security
   concentration and leave-one-security-out diagnostics. Inspect fold-standardized
   coefficients, preprocessing and FIT-only feature conditioning. Predeclare
   five-session blocks within contiguous fold intervals, seed 18, 1,000 draws;
   never join gaps or count names as independent dates. Report descriptive
   multiple-comparison limits and unavailable economic execution/account evidence.
-- [ ] Bridge evidenced professional recording semantics through existing Capture
+- [x] Bridge evidenced professional recording semantics through existing Capture
   and Market normalization to the same Dataset/model/Outcome consumers. Preserve
   unknown mappings as refusals. Test a local substitute when no authorized real
   sample exists; provide layered fixed-model source comparison with exact identities.
@@ -64,7 +64,7 @@ versioned research declarations. Old protocols, SQL and results retain their byt
 
 | Change risk | Necessary verification |
 |---|---|
-| Failure scope/calendar provenance | Real PostgreSQL failing repro, full multi-date/basis/security isolation, legitimate shared session binding, missing final label rejected before declarations |
+| Failure scope/calendar provenance | Real PostgreSQL failing repro, full multi-date/basis/security isolation, legitimate shared session binding across products and normalization cutoffs, missing final label rejected before declarations; registered v12→v13 SQL upgrade/byte-preserving retry |
 | Reuse changes facts or hides corruption | Same real input before/after numeric and roster comparison; mutated/missing Artifact refusal; bounded cache identity/invalidation; actual phase and drain costs |
 | Rolling FIT or holdout leaks labels | Mature-label boundary and train-only preprocessing; repeated scoring/foreign access refused; old decoder unchanged; real PostgreSQL reservation/opening/concurrency |
 | Constants/missingness distort comparisons | Independent median/error/rank calculations; constant IC unavailable; full/own/pair/all-arm denominators; gaps and concentration retained |

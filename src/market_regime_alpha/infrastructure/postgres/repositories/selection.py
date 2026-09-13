@@ -562,7 +562,7 @@ class PostgresSelectionRepository:
         for assessment in assessments:
             if {reason.rule.eligibility_rule_id for reason in assessment.reasons} != expected_rule_ids:
                 raise RuntimeStateConflictError("Eligibility assessment must persist every policy rule exactly once")
-        self._validate_lineage(policy, assessments)
+        self._validate_lineage(policy, assessments, universe.universe_revision_id)
         for assessment in assessments:
             pass_count = sum(reason.criterion_result is CriterionResult.PASS for reason in assessment.reasons)
             fail_count = sum(reason.criterion_result is CriterionResult.FAIL for reason in assessment.reasons)
@@ -815,6 +815,7 @@ class PostgresSelectionRepository:
         self,
         policy: EligibilityPolicy,
         assessments: tuple[EligibilityAssessmentDecision, ...],
+        universe_revision_id: UUID,
     ) -> None:
         lineages = tuple(reason.lineage for assessment in assessments for reason in assessment.reasons)
         expected = {
@@ -843,22 +844,36 @@ class PostgresSelectionRepository:
             if {UUID(str(row[0])) for row in rows} != values:
                 raise ArtifactIntegrityError("Eligibility Market lineage does not match its provider product")
         sessions = {value for lineage in lineages for value in lineage.session_ids}
+        captures = {value for lineage in lineages for value in lineage.capture_ids}
         if sessions:
-            rows = self._connection.execute(
-                """
-                SELECT session.session_id
-                FROM mra.trading_session AS session
-                JOIN mra.data_capture AS capture
-                  ON capture.capture_id = session.source_capture_id
-                WHERE session.session_id = ANY(%s)
-                  AND capture.provider_product_id = %s
-                FOR SHARE OF session
-                """,
-                (list(sessions), policy.market_provider_product_id),
-            ).fetchall()
+            scope = self._connection.execute("""
+                SELECT market_archive_id,knowledge_cutoff FROM mra.exploratory_retrospective_universe_revision
+                WHERE universe_revision_id=%s FOR SHARE
+                """,(universe_revision_id,)).fetchone()
+            if scope is None:
+                rows = self._connection.execute(
+                    """
+                    SELECT session.session_id
+                    FROM mra.trading_session AS session
+                    JOIN mra.data_capture AS capture
+                      ON capture.capture_id = session.source_capture_id
+                    WHERE session.session_id = ANY(%s)
+                      AND capture.provider_product_id = %s
+                    FOR SHARE OF session
+                    """,
+                    (list(sessions), policy.market_provider_product_id),
+                ).fetchall()
+            else:
+                rows = self._connection.execute("""
+                    SELECT session.session_id FROM mra.trading_session session
+                    CROSS JOIN LATERAL mra.exploratory_archive_calendar_capture(session.session_id,%s,%s) binding
+                    JOIN mra.data_capture capture ON capture.capture_id=binding.capture_id
+                    WHERE session.session_id=ANY(%s::uuid[]) AND capture.provider_product_id=%s
+                      AND binding.capture_id=ANY(%s::uuid[]) AND binding.foundation_integrity
+                    FOR SHARE OF session,capture
+                    """,(scope[0],scope[1],list(sessions),policy.market_provider_product_id,list(captures))).fetchall()
             if {UUID(str(row[0])) for row in rows} != sessions:
                 raise ArtifactIntegrityError("Eligibility session lineage does not match its provider product")
-        captures = {value for lineage in lineages for value in lineage.capture_ids}
         if captures:
             rows = self._connection.execute(
                 """

@@ -157,12 +157,15 @@ only to store it through the original Market Capture owner in the authorized
 research database. The request resource binds both the semantic contract hash
 and the exact raw recording hash. Capture time comes from the existing database
 clock; historical session dates never become source availability times.
-The Capture Artifact uses envelope v2, containing the complete contract,
+Without mapping evidence, the Capture Artifact retains envelope v2, containing the complete contract,
 base64 of the exact original recording bytes and their original SHA-256,
 plus the non-sensitive CaptureRequest identity. Replay reconstructs that
 request hash and compares it with the original Capture owner. Envelope v1
 remains decodable with LEGACY_UNVERIFIED request identity; it cannot satisfy
 the exact owner replay check.
+Adding `--normalization-evidence "$MAPPING_EVIDENCE"` creates a distinct v3
+Capture envelope and request resource. It embeds the exact mapping bytes whose
+SHA-256 is already frozen in the source contract. Old Captures are never rewritten.
 `mra research provider-recording-replay --capture-id "$CAPTURE_ID"
 --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
 "$RESEARCH_DATABASE_OID"` reloads the Capture owner, verifies its physical
@@ -182,6 +185,72 @@ Suspended zero bars remain explicitly suspended. Calendar completeness, event
 interval mapping, adjustment equivalence, membership history, publication
 availability and finality still require their original owners and real evidence.
 
+The new mapping schema is `mra-professional-normalization-evidence-v1`. It is a
+closed object containing `schema`, `evidence_kind`, `sdk_version`, `dividend_type`,
+`price_basis`, `price_unit`, `volume_unit`, `amount_unit`, `timestamp_meaning`,
+`timezone`, `suspension_mapping` and `source_reference`. Units, SDK and time
+semantics must match the frozen daily contract. `price_unit` is `CNY_PER_SHARE`,
+`amount_unit` is `CNY`, and timezone is `Asia/Shanghai`. The currently supported
+mapping is only `none` to `RAW_UNADJUSTED`; adjusted modes fail closed. Volume
+may be evidenced `SHARES` or `LOTS_OF_100_SHARES` (exactly 100 shares per lot, without decimal
+rounding). The suspension map is exactly `0: ACTIVE`, `1: SUSPENDED`,
+`-1: ACTIVE_RESUMED_FLAG_RETAINED_IN_CAPTURE` (JSON keys are strings).
+Local substitute recordings require `LOCAL_PROTOCOL_SUBSTITUTE`; other recordings
+require `PROVIDER_SEMANTIC_EVIDENCE`. A declared evidence reference is not itself
+an independently verified Provider qualification.
+
+```bash
+mra research provider-recording-normalize --capture-id "$CAPTURE_ID" --idempotency-key "$NORMALIZE_KEY" --actor-id "$RESEARCH_OPERATOR" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+mra research prepare-recorded-archive --recording-capture-id "$CAPTURE_ID" --reference-capture-id "$REFERENCE_CAPTURE_ID" --archive-code "$RECORDED_ARCHIVE_CODE" --wheel "$PINNED_WHEEL" --lockfile "$PINNED_LOCKFILE" --source-checkout "$SOURCE_CHECKOUT" --code-sha "$IMPLEMENTATION_SHA" --output "$RECORDED_SCOPE_DIRECTORY" --actor-id "$RESEARCH_OPERATOR" --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+```
+
+`prepare-recorded-archive` freezes `mra-recorded-archive-scope-v1` in an
+existing persistent output directory, publishes the verified code/config, and
+calls the existing Archive start/observation owners. Repeat the exact arguments
+to reconcile the original receipts. Supply one to eight distinct, already
+normalized reference Capture IDs; the recording cannot invent Calendar or
+security references. Their original product, knowledge order, physical bytes
+and exact Calendar/security coverage are verified before declarations. Default
+budgets are 1 GiB reserved free space, 134,000,000 bytes per Capture and
+1,072,000,000 bytes per Archive; explicit nonnegative/free and positive size
+limits must fit each other. No download or seal occurs in this preparation.
+
+Then use the existing `archive seal` and `research history-inventory` commands.
+Inventory v3 accepts this explicit RAW-only scope and retains all declared
+security/session slots. Request completeness and normalized quality gaps are
+separate: a COMPLETE captured-request roster may contain missing or invalid
+bars. Cross-day adjusted features remain NOT_SUPPORTED for this bridge.
+
+For an already frozen `ArchiveOperatorManifest` v1, `mra archive observe-recorded
+--manifest "$RECORDED_ARCHIVE_MANIFEST" --slice-id "$SLICE_ID" --capture-id
+"$CAPTURE_ID" --operation-key "$OBSERVATION_KEY" --actor-id "$RESEARCH_OPERATOR"
+--expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid
+"$RESEARCH_DATABASE_OID"` records the original request time without download.
+The Archive config must carry an accepted frozen inventory scope to run the
+inventory command. `archive resume` remains a BaoStock acquisition entry.
+
+Registered migration `009_exploratory_archive_calendar` (`exploratory_archive_calendar_v13`)
+resolves shared canonical Calendar identities through the exact selected Archive,
+Capture and normalization knowledge cutoff. The same source binding is used by
+exploratory Selection read/commit, study preparation, Dataset commit and Outcome
+next-session checks. Outcome retains the original canonical Session FK snapshot;
+an Archive binding is additional provenance, not a rewritten first Capture.
+It changes no historical rows or published SQL and grants no formal PIT visibility. New binaries require this
+registered schema; they do not silently upgrade a research or operational DB.
+Use the existing schema backup/upgrade-plan/apply procedure on the explicitly
+authorized research database after drain. Preserve the original wheel for
+unupgraded frozen research execution and record any later runner/schema change.
+
+Normalization requires original-product Calendar/Instrument Capture bindings
+known before this recording. It emits real RAW bars/status facts and exact
+MISSING or INVALID_OHLC SourceGaps, never weekday-derived sessions or filled
+prices. Unknown timestamps, unsupported adjustments and ambiguous replacement
+revisions are rejected. Normalization does not by itself establish sealed
+Archive coverage, feature warmup, label availability, membership history or PIT.
+Its complete expected Calendar population, including missing slots, must fit
+the frozen `maximum_rows` budget; it refuses an oversized roster before creating
+normalized facts and does not truncate missing observations.
+
 XtQuant documents separate `none`, `front`, `back`, `front_ratio` and
 `back_ratio` modes, and a `fill_data` argument. They must not be collapsed into
 BaoStock adjustment semantics or silently filled observations. Its suspension
@@ -193,7 +262,13 @@ Provider verification remains NOT_RUN. Permissions, history depth, latency,
 fees and permitted data uses require future live verification.
 
 For source comparisons, freeze a separate protocol and retain both sealed
-archives. Reuse `history-inventory` for Calendar/Instrument/gap rosters, then
+archives. A rolling v2 `prepare-historical` plan can use
+`--source-contracts-from "$ORIGINAL_RUN"` to preserve exact Target, Feature,
+Candidate/Strategy and Evaluation protocol identities on a distinct sealed
+Archive, with new source-bound eligibility and newly trained models. Its
+`mra-source-contrast-freeze-v1` cannot be opened as a new unseen holdout. Existing
+protected-label guards remain in force regardless of source or experiment ID.
+Reuse `history-inventory` for Calendar/Instrument/gap rosters, then
 canonical Dataset manifests/cells, frozen Model inference, Outcome revisions
 and reconciled Evaluation/Backtest reports in that order. Match exact security,
 session, units, price basis and Target at each layer; mismatches block attribution
@@ -208,8 +283,37 @@ metrics from runs that changed their populations or Targets.
 
 Persist every layer's identities, exclusions and access record with the source
 protocol. A source adjustment mismatch requires an explicit verified mapping or
-NOT_ESTIMABLE. The recorded adapter is not a normalization implementation or
-evidence that a professional source supports the historical campaign end to end.
+NOT_ESTIMABLE. The recorded normalization bridge is implemented; authorized real
+professional source verification remains NOT_RUN.
+
+```bash
+mra research source-compare --left-run-id "$ORIGINAL_RUN" --right-run-id "$SOURCE_VARIANT_RUN" --left-arm "$ORIGINAL_ARM" --right-arm "$VARIANT_ARM" --start-date "$COMPARISON_START" --end-date "$COMPARISON_END" --mode FIXED_PROTOCOL_RETRAIN --expected-database-name "$RESEARCH_DATABASE_NAME" --expected-database-oid "$RESEARCH_DATABASE_OID"
+```
+
+The initial source probe accepts at most twenty identical actual evaluation
+Calendar dates and 32 identical population members on each side. It rejects
+changed Target identities, repeated dates and mismatched source/mode intent
+before reading results. `FIXED_PROTOCOL_RETRAIN` additionally checks exact
+training/evaluation schedules, protocol identities, algorithm implementation,
+Feature order, parameters and seed. `FIXED_DATA_MODELS` requires the same sealed
+Archive. `FIXED_MODEL_REPLAY` requires the same native source-contrast protocol
+and Feature recipe, so an unrelated native model's missingness cannot determine
+its sample. It applies each left-hand original fitted ModelVersion
+and preprocessing to both exact Dataset manifests; original predictions must
+reproduce exactly and all original FIT labels must have matured before the
+replayed decision. This last mode is explicitly read-only inference sensitivity,
+not a new canonical Forecast/Evaluation execution. Both sides' actual native
+Forecasts and original Evaluation/Outcome identities remain in the report.
+
+The output includes raw revision identities and semantic-key differences,
+Feature values/statuses/reasons, prediction and label changes, original exclusions,
+own and paired error/IC diagnostics, model and fitted Artifact hashes. It writes
+no business facts and computes no replacement labels. Redirect the JSON to the
+persistent research evidence directory; its canonical projection SHA binds all
+layers. Missing raw sides remain missing; differing price bases cannot be paired,
+and an ambiguous revision roster is never resolved by selecting an arbitrary row.
+Current Backtest replay also verifies original sealed Archive Capture bytes, so
+missing or corrupt recorded input cannot be hidden behind completed Evaluation.
 
 This runbook describes available commands and safety boundaries, not a deployed
 service's current state. Use only the explicitly authorized project/database/

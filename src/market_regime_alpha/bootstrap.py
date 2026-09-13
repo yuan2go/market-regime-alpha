@@ -196,6 +196,7 @@ from market_regime_alpha.infrastructure.postgres.queries.prospective_health impo
 from market_regime_alpha.research_qualification.application.backtest_diagnostics import BacktestDiagnosticsApplication
 from market_regime_alpha.research_qualification.application.historical_comparison import HistoricalComparisonApplication
 from market_regime_alpha.infrastructure.postgres.queries.historical_comparison import PostgresHistoricalComparisonInputs
+from market_regime_alpha.infrastructure.postgres.queries.source_comparison import PostgresSourceComparisonInputs
 from market_regime_alpha.infrastructure.postgres.queries.backtest_holdout import PostgresBacktestHoldoutReadPort
 from market_regime_alpha.research_qualification.application.backtest_holdout import BacktestHoldoutApplication
 from market_regime_alpha.infrastructure.postgres.queries.backtests import (
@@ -616,7 +617,8 @@ def bootstrap_application(settings: TargetSettings) -> TargetApplication:
         backtest_replay,
     )
     historical_comparison = HistoricalComparisonApplication(PostgresHistoricalComparisonInputs(pool, byte_store), backtest_reports,
-        PostgresBacktestDiagnosticsSourcePort(pool), backtest_specifications)
+        PostgresBacktestDiagnosticsSourcePort(pool), backtest_specifications,
+        PostgresSourceComparisonInputs(pool, byte_store), model_predictors)
     backtest_holdouts = BacktestHoldoutApplication(PostgresBacktestUnitOfWorkProvider(pool), holdout_queries,
         backtest_specifications, historical_comparison, artifact_application, byte_store, id_factory=uuid4)
     def verify_daily_evidence() -> dict[str, Any]:

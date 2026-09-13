@@ -14,6 +14,8 @@ from market_regime_alpha.research_qualification.domain.historical_comparison imp
 )
 from market_regime_alpha.research_qualification.errors import BacktestReportIntegrityError
 from market_regime_alpha.shared.hashing import canonical_json_sha256
+from market_regime_alpha.research_qualification.ports.source_comparison import SourceComparisonInputs
+from market_regime_alpha.research_qualification.ports.model_execution import ModelPredictor
 
 
 class HistoricalComparisonInputs(Protocol):
@@ -35,8 +37,17 @@ class HistoricalComparisonApplication:
         reports: BacktestReportApplication,
         diagnostics: BacktestDiagnosticsSourcePort,
         specifications: HistoricalSpecificationReader,
+        source_inputs: SourceComparisonInputs | None = None,
+        model_predictor: ModelPredictor | None = None,
     ) -> None:
         self._inputs, self._reports, self._diagnostics, self._specifications = inputs, reports, diagnostics, specifications
+        self._source_inputs, self._model_predictor = source_inputs, model_predictor
+
+    def compare_sources(self, **arguments) -> dict[str, Any]:
+        from market_regime_alpha.research_qualification.application.source_comparison import source_comparison
+        if self._source_inputs is None or self._model_predictor is None:
+            raise ValueError("source sensitivity requires the composed Dataset/Model owner inputs")
+        return source_comparison(self._specifications, self._inputs, self.project, self._source_inputs, self._model_predictor, **arguments)
 
     def project(self, run_id: UUID) -> dict[str, Any]:
         report = self._reports.project(run_id)

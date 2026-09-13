@@ -55,7 +55,8 @@ def _exact(path: Path, content: bytes) -> None:
 
 def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: Path,
                   lockfile: Path, source_checkout: Path, code_sha: str, output: Path, actor_id: str,
-                  matrix: HistoricalMatrixPlan | HistoricalRollingPlan | None = None, reuse_contracts_from: UUID | None = None) -> dict[str, Any]:
+                  matrix: HistoricalMatrixPlan | HistoricalRollingPlan | None = None, reuse_contracts_from: UUID | None = None,
+                  source_contracts_from: UUID | None = None) -> dict[str, Any]:
     """Owner declarations and a frozen portable specification, resumable by ID."""
     if not output.is_dir():
         raise ValueError("study output must be an existing persistent directory")
@@ -63,18 +64,26 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     if matrix is not None and matrix.baseline!=plan:
         raise ValueError("historical matrix baseline identity mismatch")
     rolling = isinstance(matrix, HistoricalRollingPlan)
+    if source_contracts_from is not None and (reuse_contracts_from is not None or not rolling):
+        raise ValueError("source contrast requires rolling v2 and cannot reuse a holdout declaration")
     splits = ((HistoricalTimeSplit(plan.fit_dates,plan.purge_dates,plan.embargo_dates,plan.validation_dates),) if matrix is None else matrix.splits)
     evidence = read_study_dependencies(app._pool, plan, () if matrix is None else matrix.additional_splits, None if matrix is None else matrix.step_sessions,
         stride_anchor="VALIDATION_START" if rolling else "FIT_START")
     reused = None
-    if reuse_contracts_from is not None:
+    reuse_identity = reuse_contracts_from if source_contracts_from is None else source_contracts_from
+    if reuse_identity is not None:
         from market_regime_alpha.infrastructure.postgres.queries.candidate_research_inputs import load_parser_feature_definitions
         from market_regime_alpha.infrastructure.postgres.repositories.target_definitions import PostgresTargetDefinitionRepository
         from market_regime_alpha.infrastructure.postgres.queries.decision_inference_inputs import _load_strategy
         from market_regime_alpha.infrastructure.postgres.repositories.selection import PostgresSelectionRepository
         from market_regime_alpha.infrastructure.postgres.repositories.candidate import PostgresCandidateRepository
-        reused = app.backtest_specifications.load_specification(reuse_contracts_from)
-        if matrix is None or reused.market_archive.authority_id != plan.market_archive_id or reused.market_archive_seal.authority_id != plan.market_archive_seal_id:
+        reused = app.backtest_specifications.load_specification(reuse_identity)
+        if source_contracts_from is not None and (reused.walk_forward_policy.policy_code != "explicit_calendar_split"
+                or reused.walk_forward_policy.policy_version != 2
+                or tuple(m.instrument_id for m in reused.sample_members) != plan.instrument_ids
+                or (reused.market_archive.authority_id,reused.market_archive_seal.authority_id) == (plan.market_archive_id,plan.market_archive_seal_id)):
+            raise ValueError("source contrast needs a distinct sealed source and the exact original rolling population")
+        if source_contracts_from is None and (matrix is None or reused.market_archive.authority_id != plan.market_archive_id or reused.market_archive_seal.authority_id != plan.market_archive_seal_id):
             raise ValueError("heldout contract reuse requires an expanded matrix over the exact original sealed Archive")
         with app._pool.connection(read_only=True) as connection:
             reused_target = PostgresTargetDefinitionRepository(connection).target_definition(reused.target.authority_id, lock=False)
@@ -95,8 +104,12 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
         frozen["schema"] = "mra-historical-rolling-freeze-v2"
         frozen["constant_inputs"] = "EXACT_LISTING_FACT_INTERCEPT_NO_PRICE_DEPENDENCY"
         frozen["partition_coverage"] = evidence["partition_coverage"]
+    if source_contracts_from is not None:
+        frozen["schema"] = "mra-source-contrast-freeze-v1"
+        frozen["source_contrast"] = "EXACT_TARGET_FEATURE_PROTOCOL_REUSE_NEW_SOURCE_NEW_TRAINING_NOT_FRESH_HOLDOUT"
     if reused is not None:
-        frozen["reuse_contracts_from"] = {"run_id": reused.exploratory_backtest_run_id, "specification_sha256": str(reused.content_sha256)}
+        frozen["reuse_contracts_from" if source_contracts_from is None else "source_contracts_from"] = {
+            "run_id": reused.exploratory_backtest_run_id, "specification_sha256": str(reused.content_sha256)}
     content = _json(frozen)
     _exact(output / "frozen-study.json", content)
     provenance = sha256(content).hexdigest()
@@ -162,7 +175,13 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
     if reused is not None:
         strategy = reused_strategy
         sid = strategy.strategy_version_id
-        eligibility, candidate = reused_eligibility, reused_candidate
+        candidate = reused_candidate
+        if source_contracts_from is None:
+            eligibility = reused_eligibility
+        else:
+            eligibility = replace(reused_eligibility,eligibility_policy_id=uid("eligibility"),
+                policy_code=plan.study_code+"_source_eligible",market_provider_product_id=product_id,
+                rules=tuple(replace(rule,eligibility_rule_id=uid("source-rule:"+str(rule.ordinal))) for rule in reused_eligibility.rules))
     fit = prediction_protocol(uid("fit_protocol"), plan.study_code + "_fit", V.PartitionPurpose.FIT, target, code, config, provenance)
     validation = prediction_protocol(uid("validation_protocol"), plan.study_code + "_validation", V.PartitionPurpose.VALIDATION, target, code, config, provenance)
     if reused is None:
@@ -170,6 +189,8 @@ def prepare_study(app: TargetApplication, plan: HistoricalStudyPlan, *, wheel: P
         for registered in features:
             app.research_definitions.register_feature_definition(registered,ctx("register:feature" if registered is feature else "register:feature:"+registered.algorithm_code))
     app.selection.register_universe(universe, ctx("register:universe"))
+    if source_contracts_from is not None:
+        app.selection.register_eligibility_policy(eligibility,ctx("register:source-eligibility"))
     if reused is None:
         app.selection.register_eligibility_policy(eligibility, ctx("register:eligibility"))
         app.candidates.register_candidate_policy(candidate, ctx("register:candidate"))

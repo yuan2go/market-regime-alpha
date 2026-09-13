@@ -15,10 +15,11 @@ Historical inventory now maps original request-level Provider failures to the
 complete observed security/session/price-basis range, retaining exact gap IDs
 and successful revisions. Historical preparation rejects Calendar facts without
 the selected Archive's Capture/normalization bindings, including the immediate
-final label session, before publishing study inputs. The four disposable
-PostgreSQL boundary cases pass; exact baseline query bodies fail the three
+final label session, before publishing study inputs. The five disposable
+PostgreSQL boundary cases pass, including the Partition embargo tail; exact baseline query bodies fail the three
 negative cases and pass the shared-binding case. Adjacent Feature/failure-lineage
-checks also pass. No migration or original research result changed.
+checks also pass. These initial query corrections required no migration and
+changed no original research result.
 
 The persistent old comparison and protocol hashes have been reloaded. A new,
 separately identified real-data engineering run measures the baseline canonical
@@ -46,6 +47,43 @@ Ridge hypotheses. Constants use an archived listing-fact intercept instead of
 a price feature. Median uses research-baseline algorithm/artifact v2; v1 still
 decodes unchanged and refuses the new kind. The v2 holdout boundary reuses the
 original append-only reservation/opening owners and protected-label guards.
+A 126-session FIT protocol now freezes five candidates, six development folds
+with 132 distinct target days across July 2023–June 2024, and a separate 50-day
+February–April 2025 holdout. The latter is reserved before execution and remains
+unopened. The former has started through the independently installed frozen
+wheel, with bounded drain and original-plan resume; action counts are engineering
+progress, not independent statistical observations.
+
+An evidenced professional recording can now embed its mapping in Capture
+v3 and normalize RAW daily bars through the original Market owner. The local
+recorded PostgreSQL chain reaches Dataset, five fitted models, Outcome, Evaluation
+and replay. Corrupting the original Capture revealed a replay roster omission;
+current replay now includes original sealed Archive Capture bindings and verifies
+their physical bytes. The synthetic chain's repair regression passes. Real
+professional data, adjustment equivalence and Provider/PIT qualification remain
+NOT_RUN. The two-source recorded regression now completes ten fitted models,
+canonical Outcome/Evaluation, same-source controls, fixed-model data replay and
+fixed-protocol retraining comparisons. A missing price with independently known
+ACTIVE status retains 32 constant predictions versus 31 Ridge predictions;
+physical Capture corruption is rejected and comparison preserves the business
+fact hash. The 41 adjacent PostgreSQL owner cases pass. The separate registered
+upgrade case first failed on a new test's exception-class expectation; its corrected
+rerun passes the original exact error-code contract, byte-preserving upgrade and
+lost-ACK retry.
+Cross-product execution exposed a further SQL boundary:
+Dataset submission followed the shared Calendar's first Capture rather than its
+selected Archive binding. The same first-Capture assumption also affected
+Selection read/commit checks; the recorded negative fixture retained 480 UNKNOWN
+member slots and zero FIT samples. Forward migration 009 and the matching
+exploratory Selection/Dataset read/commit paths pass the recorded chain and
+registered upgrade/compatibility checks. They preserve historical
+SQL/rows and require
+exact Capture/normalization knowledge and current integrity. Outcome keeps its
+canonical Session FK bytes while separately verifying the selected Archive's
+actual next-session binding. Recorded Archive
+preparation also freezes an explicit RAW-only inventory scope through existing
+owners; request completion and normalized quality gaps remain separate.
+
 Long-window and new holdout research are not yet completed; follow the
 active [Roadmap](Roadmap.md) rather than the old delivery gates below.
 

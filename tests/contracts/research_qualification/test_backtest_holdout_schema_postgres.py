@@ -43,7 +43,12 @@ def test_registered_holdout_upgrade_preserves_v11_and_reconciles_committed_retry
     result=manager.apply_operational_upgrade(plan,challenge=plan.challenge,operator_id=plan.operator_id)
     repeated=manager.apply_operational_upgrade(plan,challenge=plan.challenge,operator_id=plan.operator_id)
     assert not result.replayed and repeated.replayed and result.receipt_id==repeated.receipt_id
-    assert manager.verify().catalog_checksum==plan.next_catalog_sha256
+    # This test deliberately stops at the historic v12 target. Validate that
+    # exact registered route; ordinary latest startup requires the next upgrade.
+    definition=manager._resolve_operational_upgrade_definition(prior_baseline_sha256=plan.prior_baseline_sha256,
+        prior_catalog_sha256=plan.prior_catalog_sha256,prior_reference_vocabulary_sha256=plan.prior_reference_vocabulary_sha256)
+    with manager._connect(read_only=True) as connection:
+        assert manager._verify_connection(connection,created=False,expected_upgrade=definition).catalog_checksum==plan.next_catalog_sha256
     with psycopg.connect(target_database_url) as c:
         # Match the canonical pool/upgrade serialization timezone. The same
         # timestamptz bytes must not be compared using a different text offset.

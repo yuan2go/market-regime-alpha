@@ -185,7 +185,7 @@ def test_seed_initializes_only_epoch_and_migration_reference_state(
         migrations = connection.execute(
             "SELECT version, name, checksum FROM mra.schema_migrations ORDER BY version"
         ).fetchall()
-    assert counts == (1, 8, 0, 0, 0, 0)
+    assert counts == (1, 9, 0, 0, 0, 0)
     assert migrations == [
         (1, "001_baseline", "f417b63cf3dc534b1a5d329c5a30462945bfeb6b8c4389bf8ab3a9e1f4efbd27"),
         (2, "002_prospective_revision_gap", "bd5978ae2ccfd56a9d117c41e13e0a8f7c76fbdd4d83d4aa1b32757dbe753063"),
@@ -195,4 +195,5 @@ def test_seed_initializes_only_epoch_and_migration_reference_state(
         (6, "006_historical_archive_inventory", "bd838d8ac883c4a2adb2883af14ae63ce67174beaee659dea21132dbbbaedeaa"),
         (7, "007_backtest_model_subsets", "af8de6bda7051916fa868d3a08139ccef7214d9dcf0540c29dc55f35d79a9334"),
         (8, "008_backtest_exploratory_holdout", "7b3fec55f3ad340dd65b462131d378693c9ab841fb09502e484ccce746958d87"),
+        (9, "009_exploratory_archive_calendar", "a4c5d60a352c4bb40ff27238665dbe2d980db3a33095919cb4ec9ae5e9940165"),
     ]
